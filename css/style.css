@@ -1,0 +1,350 @@
+/* style.css — tema visual SIGNALIS-OS */
+/* ──────────────────────────────────────────────────────────────
+   Paleta:
+   --bg-deep:    #050d1a   (fundo mais escuro, quase preto-azul)
+   --bg-panel:   #0a1628   (painéis e janelas)
+   --bg-hover:   #0f2040   (hover de itens)
+   --blue-main:  #4a9eff   (texto e elementos principais)
+   --blue-light: #7ec8e3   (destaque, hover de texto)
+   --blue-dim:   #1a3a5c   (bordas, separadores)
+   --red-alert:  #bf2020   (erros e alertas)
+   --yellow-warn:#bf9c1a   (avisos)
+   --glow-color: #4a9eff55 (sombra glow)
+────────────────────────────────────────────────────────────── */
+
+:root {
+  --bg-deep:    #050d1a;
+  --bg-panel:   #0a1628;
+  --bg-hover:   #0f2040;
+  --blue-main:  #4a9eff;
+  --blue-light: #7ec8e3;
+  --blue-dim:   #1a3a5c;
+  --red-alert:  #bf2020;
+  --yellow-warn:#bf9c1a;
+  --glow:       0 0 8px #4a9eff88, 0 0 2px #4a9effcc;
+  --font-mono:  'Share Tech Mono', 'Courier New', monospace;
+  --transition: 0.15s ease;
+}
+
+* {
+  margin: 0; padding: 0;
+  box-sizing: border-box;
+  user-select: none;         /* sem seleção acidental de texto */
+}
+
+body {
+  font-family: var(--font-mono);
+  background: var(--bg-deep);
+  color: var(--blue-main);
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── EFEITO SCANLINES ─────────────────────────────────────── */
+/* Um pseudo-elemento cobrindo a tela inteira com linhas */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 2px,
+    rgba(0, 0, 0, 0.18) 2px,
+    rgba(0, 0, 0, 0.18) 4px
+  );
+  pointer-events: none;   /* não bloqueia cliques */
+  z-index: 9999;
+}
+
+/* ── VIGNETTE (bordas escuras) ────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 60%,
+    rgba(0, 0, 0, 0.6) 100%
+  );
+  pointer-events: none;
+  z-index: 9998;
+}
+
+/* ── DESKTOP ──────────────────────────────────────────────── */
+#desktop {
+  width: 100vw;
+  height: calc(100vh - 36px);  /* espaço para a taskbar */
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── WALLPAPER ────────────────────────────────────────────── */
+#wallpaper {
+  position: absolute;
+  inset: 0;
+  /* Grade de pontos estilo painel de controle de nave */
+  background:
+    radial-gradient(circle, #1a3a5c22 1px, transparent 1px),
+    radial-gradient(ellipse at 30% 40%, #0a2040 0%, transparent 60%),
+    radial-gradient(ellipse at 70% 80%, #071830 0%, transparent 50%),
+    var(--bg-deep);
+  background-size: 28px 28px, 100% 100%, 100% 100%, 100% 100%;
+  transition: opacity 0.4s ease;
+}
+
+#wallpaper.hidden { opacity: 0; }
+
+/* ── TASKBAR ──────────────────────────────────────────────── */
+#taskbar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 36px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--blue-dim);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+  z-index: 1000;
+  -webkit-app-region: no-drag;  /* não arrasta a janela pelo taskbar */
+}
+
+/* Barra de título customizada (como não tem frame nativo) */
+#titlebar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 28px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--blue-dim);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  -webkit-app-region: drag;     /* arrasta a janela clicando aqui */
+  z-index: 1000;
+}
+
+#titlebar-title {
+  font-size: 11px;
+  color: var(--blue-dim);
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+
+#titlebar-controls {
+  display: flex;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+/* ── BOTÕES GLOBAIS ───────────────────────────────────────── */
+button, .btn {
+  background: transparent;
+  border: 1px solid var(--blue-dim);
+  color: var(--blue-main);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: var(--transition);
+  letter-spacing: 1px;
+}
+
+button:hover, .btn:hover {
+  border-color: var(--blue-main);
+  color: var(--blue-light);
+  text-shadow: var(--glow);
+  box-shadow: var(--glow);
+}
+
+button:active { opacity: 0.7; }
+
+/* Botões de controle da janela do SO (minimizar/fechar) */
+.win-ctrl {
+  width: 26px; height: 20px;
+  padding: 0;
+  font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.win-ctrl.close:hover  { border-color: var(--red-alert); color: var(--red-alert); box-shadow: 0 0 6px #bf202088; }
+
+/* ── JANELAS FLUTUANTES ───────────────────────────────────── */
+.os-window {
+  position: absolute;
+  min-width: 320px;
+  min-height: 200px;
+  background: var(--bg-panel);
+  border: 1px solid var(--blue-dim);
+  box-shadow: 0 0 20px #000a, var(--glow);
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+}
+
+.os-window:focus-within { border-color: var(--blue-main); }
+
+.os-window-titlebar {
+  height: 28px;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--blue-dim);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  gap: 6px;
+  cursor: grab;
+  flex-shrink: 0;
+}
+
+.os-window-titlebar:active { cursor: grabbing; }
+
+.os-window-title {
+  flex: 1;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--blue-light);
+  text-shadow: var(--glow);
+}
+
+.os-window-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ── TERMINAL ─────────────────────────────────────────────── */
+#terminal-output {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  scrollbar-gutter: stable;
+}
+
+#terminal-output::-webkit-scrollbar { width: 6px; }
+#terminal-output::-webkit-scrollbar-track { background: transparent; }
+#terminal-output::-webkit-scrollbar-thumb {
+  background: var(--blue-dim);
+  border-radius: 999px;
+}
+
+.terminal-input-row {
+  display: flex;
+  align-items: center;
+  border-top: 1px solid var(--blue-dim);
+  padding: 6px 10px;
+  gap: 6px;
+}
+
+.terminal-prefix {
+  color: var(--blue-light);
+  font-size: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+#terminal-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--blue-main);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  caret-color: var(--blue-light);
+}
+
+/* cores de output do terminal */
+.t-cmd    { color: var(--blue-light); }
+.t-error  { color: var(--red-alert);  }
+.t-warn   { color: var(--yellow-warn);}
+.t-dim    { color: var(--blue-dim);   }
+.t-aris   { color: #a0d8ef; }         /* tom diferente para respostas do ARIS-9 */
+
+/* ── MONITOR DE SISTEMA ───────────────────────────────────── */
+.sysmon-body {
+  padding: 12px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sysmon-row label {
+  display: block;
+  font-size: 10px;
+  color: var(--blue-dim);
+  letter-spacing: 2px;
+  margin-bottom: 3px;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--bg-deep);
+  border: 1px solid var(--blue-dim);
+  position: relative;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--blue-main);
+  box-shadow: var(--glow);
+  transition: width 0.6s ease, background 0.6s ease;
+}
+
+.progress-fill.warn  { background: var(--yellow-warn); box-shadow: 0 0 8px #bf9c1a88; }
+.progress-fill.alert { background: var(--red-alert);   box-shadow: 0 0 8px #bf202088; }
+
+.sysmon-value {
+  font-size: 11px;
+  color: var(--blue-light);
+  margin-top: 2px;
+}
+
+.sysmon-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--blue-dim);
+}
+
+.sysmon-grid span { color: var(--blue-main); }
+
+/* ── TASKBAR BUTTONS ──────────────────────────────────────── */
+.taskbar-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  letter-spacing: 1px;
+}
+
+.taskbar-clock {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--blue-light);
+  text-shadow: var(--glow);
+  letter-spacing: 2px;
+}
+
+/* ── FLICKER ANIMATION ────────────────────────────────────── */
+@keyframes flicker {
+  0%, 100% { opacity: 1;    }
+  92%       { opacity: 1;    }
+  93%       { opacity: 0.85; }
+  94%       { opacity: 1;    }
+  96%       { opacity: 0.9;  }
+  97%       { opacity: 1;    }
+}
+
+body { animation: flicker 8s infinite; }

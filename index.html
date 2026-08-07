@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>SIGNALIS-OS // ARIS-9</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* Ajustes para rodar no browser (sem frame nativo do Electron) */
+    #titlebar { -webkit-app-region: none; cursor: default; }
+    body { overflow: hidden; }
+  </style>
+</head>
+<body>
+
+  <!-- ── BARRA DE TÍTULO ──────────────────────────────────── -->
+  <div id="titlebar">
+    <span id="titlebar-title">SIGNALIS-OS // ARIS-9 // BROWSER MODE</span>
+    <div id="titlebar-controls">
+      <button class="win-ctrl" onclick="api.minimize()" title="Minimizar">─</button>
+      <button class="win-ctrl" onclick="api.maximize()" title="Maximizar">□</button>
+      <button class="win-ctrl close" onclick="api.close()" title="Fechar">✕</button>
+    </div>
+  </div>
+
+  <!-- ── DESKTOP ─────────────────────────────────────────── -->
+  <div id="desktop" style="margin-top:28px;">
+    <div id="wallpaper"></div>
+    <div id="windows-container"></div>
+  </div>
+
+  <!-- ── TASKBAR ─────────────────────────────────────────── -->
+  <div id="taskbar">
+    <button class="taskbar-btn" onclick="openTerminal()">[ TERMINAL ]</button>
+    <button class="taskbar-btn" onclick="openSysMon()">[ SYSMON ]</button>
+    <button class="taskbar-btn" id="btn-wallpaper" onclick="toggleWallpaper()">[ WALLPAPER ON ]</button>
+    <span class="taskbar-clock" id="clock">00:00:00</span>
+  </div>
+
+  <!-- ── TEMPLATE: TERMINAL ──────────────────────────────── -->
+  <template id="tpl-terminal">
+    <div class="os-window" style="width:680px;height:420px;top:60px;left:60px;">
+      <div class="os-window-titlebar" data-drag>
+        <span class="os-window-title">TERMINAL // ARIS-9</span>
+        <button class="win-ctrl" data-action="minimize">─</button>
+        <button class="win-ctrl close" data-action="close">✕</button>
+      </div>
+      <div class="os-window-body">
+        <div class="terminal-output" id="terminal-output"></div>
+        <div class="terminal-input-row">
+          <span class="terminal-prefix" id="terminal-prefix">ARIS@OS ~$</span>
+          <input type="text" id="terminal-input" autocomplete="off" spellcheck="false"
+                 placeholder="comando ou mensagem para o ARIS-9...">
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ── TEMPLATE: MONITOR DE SISTEMA ───────────────────── -->
+  <template id="tpl-sysmon">
+    <div class="os-window" style="width:360px;height:310px;top:60px;left:780px;">
+      <div class="os-window-titlebar" data-drag>
+        <span class="os-window-title">MONITOR DE SISTEMA</span>
+        <button class="win-ctrl" data-action="minimize">─</button>
+        <button class="win-ctrl close" data-action="close">✕</button>
+      </div>
+      <div class="os-window-body sysmon-body">
+        <div class="sysmon-row">
+          <label>CPU</label>
+          <div class="progress-bar"><div class="progress-fill" id="sm-cpu-bar" style="width:0%"></div></div>
+          <div class="sysmon-value" id="sm-cpu-val">—</div>
+        </div>
+        <div class="sysmon-row">
+          <label>RAM</label>
+          <div class="progress-bar"><div class="progress-fill" id="sm-ram-bar" style="width:0%"></div></div>
+          <div class="sysmon-value" id="sm-ram-val">—</div>
+        </div>
+        <div class="sysmon-row">
+          <label>DISCO</label>
+          <div class="progress-bar"><div class="progress-fill" id="sm-disk-bar" style="width:0%"></div></div>
+          <div class="sysmon-value" id="sm-disk-val">—</div>
+        </div>
+        <div class="sysmon-grid">
+          <div>HOST</div>   <span id="sm-host">...</span>
+          <div>CPU</div>    <span id="sm-cpu-model">...</span>
+          <div>CORES</div>  <span id="sm-cores">...</span>
+          <div>UPTIME</div> <span id="sm-uptime">...</span>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ── SCRIPTS ─────────────────────────────────────────── -->
+  <!-- 1. mock-api.js PRIMEIRO — cria window.api antes de tudo -->
+  <script src="js/mock-api.js"></script>
+  <script src="js/windowManager.js"></script>
+  <script src="js/agent.js"></script>
+  <script src="js/terminal.js"></script>
+  <script src="js/sysmon.js"></script>
+  <script src="js/desktop.js"></script>
+
+  <script>
+    // Abre o terminal automaticamente ao carregar
+    window.addEventListener('load', () => {
+      setTimeout(openTerminal, 300)
+    })
+  </script>
+
+</body>
+</html>
