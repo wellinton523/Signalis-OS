@@ -1,9 +1,9 @@
 // terminal.js
 // ─────────────────────────────────────────────────────────────
-// Terminal duplo:
-//   • Texto normal  → ARIS-9 (agente de IA)
-//   • .comando      → executa direto, sem chamar a IA
-//   • .cmd <texto>  → passa direto pro CMD/bash do sistema
+// Terminal duplo com suporte estendido a Markdown (Ênfase & Código)
+//   • Formatadores suportados: **negrito**, *itálico*, `código`, *`código em itálico`*
+//   • Suporte a comandos de ação via **act:comando**
+//   • Interceptador de shutdown integrado com contagem regressiva
 // ─────────────────────────────────────────────────────────────
 
 let _terminalWin    = null
@@ -21,7 +21,7 @@ if (typeof window !== 'undefined') {
   window.__onAgentStage = ({ stage, detail }) => {
     if (!_termOutput) return
     const label = String(stage || 'agent').toLowerCase()
-    const message = detail ? ` — ${escHtml(detail)}` : ''
+    const message = detail ? ` — ${_parseMarkdown(escHtml(detail))}` : ''
     _appendLine(`<span class="t-dim">[agent] ${escHtml(label)}${message}</span>`)
   }
 }
@@ -50,17 +50,31 @@ function openTerminal() {
 
   _typeLine('SIGNALIS-OS // TERMINAL v0.1', 'dim')
   _typeLine('ARIS-9 ONLINE. AGUARDANDO DIRETIVA.', 'aris')
-  _typeLine("Comandos diretos iniciam com '.' — .help para listar.", 'dim')
+  _typeLine("Comandos diretos iniciam com '.' — Suporte a Markdown expandido.", 'dim')
 }
 
 
-// ── Submissão de comando ──────────────────────────────────────
+// ── Submissão de comando (Entrada do Usuário) ────────────────
 async function _onSubmit(raw) {
-  const text = raw.trim()
+  let text = raw.trim()
   _termInput.value = ''
   if (!text) return
 
-  _appendLine(`<span class="t-cmd">> ${escHtml(text)}</span>`)
+  // Extrai ação explícita no formato **act:comando**
+  let actionSuffix = null
+  const actionMatch = text.match(/\*\*act:([a-zA-Z0-9_\-]+)\*\*$/)
+
+  if (actionMatch) {
+    actionSuffix = actionMatch[1].toLowerCase()
+    text = text.replace(/\*\*act:([a-zA-Z0-9_\-]+)\*\*$/, '').trim()
+  }
+
+  _appendLine(`<span class="t-cmd">> ${_parseMarkdown(escHtml(raw))}</span>`)
+
+  if (actionSuffix) {
+    const handled = await _processSuffixAction(actionSuffix, text)
+    if (handled) return
+  }
 
   if (text.startsWith('.')) {
     await _runDirect(text.slice(1).trim())
@@ -71,6 +85,7 @@ async function _onSubmit(raw) {
     }
     _terminalBusy = true
     _termInput.disabled = true
+    
     await agentSend(text)
       .then(action => _handleAgentAction(action))
       .catch(err   => _appendLine(`<span class="t-error">[FALHA] ${escHtml(err)}</span>`))
@@ -79,6 +94,33 @@ async function _onSubmit(raw) {
         _termInput.disabled = false
         _termInput.focus()
       })
+  }
+}
+
+
+// ── Processador de Ações via Sufixo ──────────────────────────
+async function _processSuffixAction(actionName, content) {
+  switch (actionName) {
+    case 'cmd':
+    case 'exec':
+      await _cmdPassthrough(content)
+      return true
+
+    case 'web':
+    case 'search':
+      await _handleAgentAction({ acao: 'abrir_busca_web', parametro: content, texto: `Buscando: ${content}` })
+      return true
+
+    case 'clear':
+      _termOutput.innerHTML = ''
+      return true
+
+    case 'open':
+      await _cmdOpen([content])
+      return true
+
+    default:
+      return false
   }
 }
 
@@ -114,6 +156,11 @@ async function _runDirect(cmdRaw) {
 
 function _cmdHelp() {
   const lines = [
+    '<span class="t-dim">── FORMATAÇÕES DE ÊNFASE SUPORTADAS ──────────────</span>',
+    '  <span class="t-aris">**texto**</span>          Negrito / Alerta',
+    '  <span class="t-aris">*texto*</span>           Itálico / Destaque suave',
+    '  <span class="t-aris">`texto`</span>           Código / Comando inline',
+    '  <span class="t-aris">*`texto`*</span>         Itálico com estilo de código',
     '<span class="t-dim">── COMANDOS DIRETOS ─────────────────────────────</span>',
     '  .help                     esta lista',
     '  .clear                    limpa o terminal',
@@ -126,14 +173,6 @@ function _cmdHelp() {
     '  .shutdown cancel          cancela o desligamento',
     '  .cmd &lt;comando&gt;            executa no CMD/bash do sistema',
     '  .reset                    limpa memória do ARIS-9',
-    '<span class="t-dim">── EXEMPLOS .cmd ────────────────────────────────</span>',
-    '  .cmd ipconfig             info de rede (Windows)',
-    '  .cmd tasklist             processos (Windows)',
-    '  .cmd ping google.com      testa conexão',
-    '  .cmd echo olá             imprime texto',
-    '<span class="t-dim">── ARIS-9 ───────────────────────────────────────</span>',
-    '  Qualquer texto sem ponto vai para o ARIS-9.',
-    '  Ex: <span class="t-aris">abra o youtube</span>  /  <span class="t-aris">qual o clima?</span>',
   ]
   lines.forEach(l => _appendLine(l))
 }
@@ -217,13 +256,9 @@ async function _cmdKill(args) {
 
 
 // ── .shutdown ─────────────────────────────────────────────────
-// .shutdown          → desliga em 60 segundos (padrão)
-// .shutdown 300      → desliga em 5 minutos
-// .shutdown cancel   → cancela o desligamento agendado
 async function _cmdShutdown(args) {
   const arg = args[0] ?? ''
 
-  // Cancelar
   if (arg.toLowerCase() === 'cancel') {
     if (!_shutdownTimer) {
       _appendLine('<span class="t-warn">Nenhum desligamento agendado.</span>')
@@ -232,7 +267,6 @@ async function _cmdShutdown(args) {
     clearInterval(_shutdownTimer)
     _shutdownTimer = null
 
-    // Cancela também no nível do SO
     const cancelCmd = process?.platform === 'win32'
       ? 'shutdown /a'
       : 'shutdown -c ""'
@@ -242,13 +276,11 @@ async function _cmdShutdown(args) {
     return
   }
 
-  // Se já tem um timer rodando, bloqueia
   if (_shutdownTimer) {
     _appendLine('<span class="t-error">Já existe um desligamento agendado. Use .shutdown cancel primeiro.</span>')
     return
   }
 
-  // Determina o tempo em segundos
   const seconds = arg === '' ? 60 : parseInt(arg)
   if (isNaN(seconds) || seconds < 1) {
     _appendLine('<span class="t-error">Uso: .shutdown [segundos] | .shutdown cancel</span>')
@@ -257,9 +289,6 @@ async function _cmdShutdown(args) {
 
   _shutdownCountdown = seconds
 
-  // Emite o comando real de shutdown no SO
-  // No Windows: shutdown /s /t <segundos>
-  // No Linux/Mac: shutdown -h +<minutos> (mínimo 1 min no Linux)
   const shutdownCmd = process?.platform === 'win32'
     ? `shutdown /s /t ${seconds}`
     : `shutdown -h +${Math.max(1, Math.ceil(seconds / 60))}`
@@ -269,11 +298,9 @@ async function _cmdShutdown(args) {
   _appendLine(`<span class="t-error">[ SHUTDOWN AGENDADO — ${seconds}s ]</span>`)
   _appendLine('<span class="t-dim">Use .shutdown cancel para cancelar.</span>')
 
-  // Contador visual no terminal, atualizado a cada segundo
   _shutdownTimer = setInterval(() => {
     _shutdownCountdown--
 
-    // A cada 10 segundos (e nos últimos 10) mostra o countdown
     if (_shutdownCountdown <= 10 || _shutdownCountdown % 10 === 0) {
       _appendLine(`<span class="t-error">DESLIGANDO EM ${_shutdownCountdown}s</span>`)
     }
@@ -287,8 +314,6 @@ async function _cmdShutdown(args) {
 
 
 // ── .cmd — passthrough para CMD/bash ──────────────────────────
-// Executa qualquer comando do sistema e mostra o output no terminal.
-// Exemplos: .cmd ipconfig  /  .cmd ls -la  /  .cmd ping google.com
 async function _cmdPassthrough(rawCmd) {
   if (!rawCmd) {
     _appendLine('<span class="t-error">Uso: .cmd &lt;comando&gt;  — ex: .cmd ipconfig</span>')
@@ -299,21 +324,18 @@ async function _cmdPassthrough(rawCmd) {
 
   const result = await api.exec(rawCmd)
 
-  // stdout — output normal do comando
   if (result.stdout?.trim()) {
     result.stdout.trim().split('\n').forEach(line => {
       _appendLine(`<span style="color:#c8d8e8">${escHtml(line)}</span>`)
     })
   }
 
-  // stderr — erros ou avisos do comando
   if (result.stderr?.trim()) {
     result.stderr.trim().split('\n').forEach(line => {
       _appendLine(`<span class="t-error">${escHtml(line)}</span>`)
     })
   }
 
-  // Erro de execução em si (ex: comando não encontrado)
   if (result.error) {
     _appendLine(`<span class="t-error">Erro ao executar: ${escHtml(result.error)}</span>`)
   }
@@ -331,7 +353,23 @@ async function _handleAgentAction(action) {
     return
   }
 
+  let rawText = action.texto ?? ''
+
+  let agentActionSuffix = null
+  const actionMatch = rawText.match(/\*\*act:([a-zA-Z0-9_\-]+)\*\*$/)
+
+  if (actionMatch) {
+    agentActionSuffix = actionMatch[1].toLowerCase()
+    rawText = rawText.replace(/\*\*act:([a-zA-Z0-9_\-]+)\*\*$/, '').trim()
+    action.texto = rawText
+  }
+
   _showAgentAction(action)
+
+  if (agentActionSuffix) {
+    const handled = await _processSuffixAction(agentActionSuffix, action.parametro || rawText)
+    if (handled) return
+  }
 
   switch (String(action.acao ?? '').toLowerCase()) {
     case 'buscar_web': {
@@ -347,13 +385,13 @@ async function _handleAgentAction(action) {
             _appendLine(`<span class="t-dim">• ${escHtml(item.title)}<br><span style="color:#6ee7f9">${escHtml(item.url)}</span></span>`)
           })
           if (action.texto) {
-            _appendLine(`<span class="t-aris">${escHtml(action.texto)}</span>`)
+            _appendLine(`<span class="t-aris">${_parseMarkdown(escHtml(action.texto))}</span>`)
           }
           _logTool('search', 'ok', `${results.length} resultados`)
         } else {
           _appendLine(`<span class="t-warn">Nenhum resultado encontrado.</span>`)
           if (action.texto) {
-            _appendLine(`<span class="t-warn">${escHtml(action.texto)}</span>`)
+            _appendLine(`<span class="t-warn">${_parseMarkdown(escHtml(action.texto))}</span>`)
           }
           _logTool('search', 'ok', 'sem resultados')
         }
@@ -366,25 +404,37 @@ async function _handleAgentAction(action) {
     case 'abrir_site':
       _logTool('open', 'start', action.parametro || 'site')
       api.open(action.parametro)
-      _appendLine(`<span class="t-aris">${escHtml(action.texto ?? '')}</span>`)
+      _appendLine(`<span class="t-aris">${_parseMarkdown(escHtml(action.texto ?? ''))}</span>`)
       _logTool('open', 'ok', action.parametro || 'site')
       break
     case 'abrir_arquivo':
       _logTool('open', 'start', action.parametro || 'arquivo')
       api.open(action.parametro)
-      _appendLine(`<span class="t-aris">${escHtml(action.texto ?? '')}</span>`)
+      _appendLine(`<span class="t-aris">${_parseMarkdown(escHtml(action.texto ?? ''))}</span>`)
       _logTool('open', 'ok', action.parametro || 'arquivo')
       break
     case 'pesquisar':
     case 'abrir_busca_web':
       api.open(`https://www.google.com/search?q=${encodeURIComponent(action.parametro)}`)
-      _appendLine(`<span class="t-aris">${escHtml(action.texto ?? '')}</span>`)
+      _appendLine(`<span class="t-aris">${_parseMarkdown(escHtml(action.texto ?? ''))}</span>`)
       break
     case 'buscar_conhecimento':
-      _appendLine(`<span class="t-aris">${escHtml(action.texto ?? '')}</span>`)
+      _appendLine(`<span class="t-aris">${_parseMarkdown(escHtml(action.texto ?? ''))}</span>`)
       break
     case 'executar_comando': {
       const cmd = String(action.parametro ?? '').trim()
+
+      // Intercepta e delega o desligamento para o temporizador nativo do terminal
+      if (cmd.toLowerCase().startsWith('shutdown')) {
+        const parts = cmd.split(/\s+/)
+        const tIndex = parts.indexOf('/t') !== -1 ? parts.indexOf('/t') : parts.indexOf('-t')
+        const seconds = tIndex !== -1 && parts[tIndex + 1] ? parts[tIndex + 1] : '10'
+        
+        if (action.texto) _appendLine(`<span class="t-aris">${_parseMarkdown(escHtml(action.texto))}</span>`)
+        await _cmdShutdown([seconds])
+        break
+      }
+
       if (cmd) {
         _logTool('exec', 'start', cmd)
         _appendLine(`<span class="t-dim">$ ${escHtml(cmd)}</span>`)
@@ -406,11 +456,11 @@ async function _handleAgentAction(action) {
           _logTool('exec', 'ok', 'comando concluído')
         }
       }
-      if (action.texto) _appendLine(`<span class="t-aris">${escHtml(action.texto)}</span>`)
+      if (action.texto) _appendLine(`<span class="t-aris">${_parseMarkdown(escHtml(action.texto))}</span>`)
       break
     }
     case 'editar_arquivo':
-      _appendLine(`<span class="t-aris">${escHtml(action.texto ?? `Atualizando ${action.parametro ?? 'arquivo'}`)}</span>`)
+      _appendLine(`<span class="t-aris">${_parseMarkdown(escHtml(action.texto ?? `Atualizando ${action.parametro ?? 'arquivo'}`))}</span>`)
       break
     case 'resposta':
     default:
@@ -463,11 +513,32 @@ function _showAgentAction(action) {
 }
 
 
-// ── Helpers de output ─────────────────────────────────────────
+// ── Parser de Markdown Estendido ───────────────────────────────
+// ── Parser de Markdown Estendido & Links Clicáveis ───────────────
+function _parseMarkdown(str) {
+  return String(str)
+    // 1. Links embutidos no formato [Texto](https://link.com ou C:/caminho/arquivo.txt)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, target) => {
+      return `<a href="#" onclick="api.open('${escHtml(target)}'); return false;" style="color: #6ee7f9; text-decoration: underline; cursor: pointer;">${escHtml(label)}</a>`
+    })
+    // 2. URLs diretas (http:// ou https://) fora de tags de código
+    .replace(/(?<!=["'])(https?:\/\/[^\s<]+)/g, (match, url) => {
+      return `<a href="#" onclick="api.open('${escHtml(url)}'); return false;" style="color: #6ee7f9; text-decoration: underline; cursor: pointer;">${escHtml(url)}</a>`
+    })
+    // 3. Itálico com estilo de código: *`texto`*
+    .replace(/\*`([^`]+)`\*/g, '<code style="color: #6ee7f9; font-style: italic; background: rgba(110, 231, 249, 0.1); padding: 2px 4px; border-radius: 3px;">$1</code>')
+    // 4. Negrito: **texto**
+    .replace(/\*\*([^*]+)\*\*/g, '<strong style="color: #ffffff; font-weight: bold;">$1</strong>')
+    // 5. Itálico: *texto*
+    .replace(/\*([^*]+)\*/g, '<em style="color: #00f0ff; font-style: italic;">$1</em>')
+    // 6. Código inline: `texto`
+    .replace(/`([^`]+)`/g, '<code style="color: #38bdf8; background: rgba(56, 189, 248, 0.15); padding: 2px 4px; border-radius: 3px; font-family: monospace;">$1</code>')
+}
+
 function _logTool(name, status, detail = '') {
   if (!_termOutput) return
   const colorClass = status === 'ok' ? 't-aris' : status === 'error' ? 't-error' : 't-dim'
-  const detailText = detail ? ` — ${escHtml(detail)}` : ''
+  const detailText = detail ? ` — ${_parseMarkdown(escHtml(detail))}` : ''
   _appendLine(`<span class="${colorClass}">[tool] ${escHtml(name)} ${escHtml(status)}${detailText}</span>`)
 }
 
@@ -485,11 +556,9 @@ async function _typeLine(text, cssClass = '') {
   if (cssClass) div.className = `t-${cssClass}`
   _termOutput.appendChild(div)
 
-  for (const char of text) {
-    div.textContent += char
-    _termOutput.scrollTop = _termOutput.scrollHeight
-    await _sleep(12)
-  }
+  const formattedHtml = _parseMarkdown(escHtml(text))
+  div.innerHTML = formattedHtml
+  _termOutput.scrollTop = _termOutput.scrollHeight
 }
 
 function _updatePrefix() {
@@ -503,6 +572,6 @@ function _sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
 
 function escHtml(str) {
   return String(str)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
 }
