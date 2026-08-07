@@ -3,39 +3,43 @@ import json
 import mimetypes
 import urllib.request
 import urllib.error
+import time
+import platform
+import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote
+
+# Tenta importar psutil para métricas precisas. Se não estiver instalado, usa fallbacks.
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.getenv("PORT", "8000"))
 
 # ── Configuração do provider LLM ──────────────────────────────
-# Opções: "ollama", "openrouter", "groq", "openai"
-# Configure via variável de ambiente, NUNCA coloque a chave no código.
-#
-# Como configurar no terminal antes de rodar:
-#   Windows:  set LLM_PROVIDER=openrouter && set LLM_API_KEY=sk-...
-#   Linux:    export LLM_PROVIDER=openrouter LLM_API_KEY=sk-...
-#   Codespace: vá em Settings → Secrets e adicione LLM_API_KEY
-#
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
-API_KEY      = os.getenv("LLM_API_KEY", "")   # ← variável de ambiente, nunca hardcoded
+API_KEY      = os.getenv("LLM_API_KEY", "")
 
 OLLAMA_HOST  = os.getenv("OLLAMA_HOST", "127.0.0.1")
 OLLAMA_PORT  = int(os.getenv("OLLAMA_PORT", "11434"))
 
-# URLs de cada provider
 PROVIDER_URLS = {
     "openrouter": "https://openrouter.ai/api/v1/chat/completions",
     "groq":       "https://api.groq.com/openai/v1/chat/completions",
     "openai":     "https://api.openai.com/v1/chat/completions",
 }
 
+# Variáveis globais para cálculo de uso de CPU (Fallback sem psutil)
+_last_cpu_idle = 0
+_last_cpu_total = 0
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        # Silencia logs de acesso pra não poluir o terminal durante uso
         pass
 
     def do_GET(self):    self._handle_request()
@@ -50,6 +54,20 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_request(self):
         parsed = urlparse(self.path)
 
+        # ── Rotas do Monitor de Sistema (SysMon) ──────────────
+        if parsed.path == "/api/system/info":
+            self._handle_sys_info()
+            return
+
+        if parsed.path == "/api/system/cpu":
+            self._handle_sys_cpu()
+            return
+
+        if parsed.path == "/api/system/disk":
+            self._handle_sys_disk()
+            return
+
+        # ── Proxies Existentes ────────────────────────────────
         if parsed.path.startswith("/api/ollama"):
             self._proxy_to_llm(parsed)
             return
@@ -83,13 +101,101 @@ class Handler(BaseHTTPRequestHandler):
             "Access-Control-Allow-Origin": "*",
         })
 
+    # ── Endpoints do SysMon ───────────────────────────────────
+    def _handle_sys_info(self):
+        global HAS_PSUTIL
+        if HAS_PSUTIL:
+            mem = psutil.virtual_memory()
+            total_ram = mem.total
+            free_ram = mem.available
+            cpu_cores = psutil.cpu_count(logical=True)
+            uptime = int(time.time() - psutil.boot_time())
+        else:
+            # Fallback usando a biblioteca padrão
+            total_ram = 8 * 1024 * 1024 * 1024  # 8GB Padrão se não conseguir ler
+            free_ram = 4 * 1024 * 1024 * 1024
+            cpu_cores = os.cpu_count() or 4
+            uptime = 0
+
+            if hasattr(os, 'sysconf'):
+                if 'SC_PAGE_SIZE' in os.sysconf_names and 'SC_PHYS_PAGES' in os.sysconf_names:
+                    total_ram = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
+                if 'SC_AVPHYS_PAGES' in os.sysconf_names:
+                    free_ram = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_AVPHYS_PAGES')
+
+            try:
+                with open('/proc/uptime', 'r') as f:
+                    uptime = int(float(f.readline().split()[0]))
+            except Exception:
+                pass
+
+        data = {
+            "hostname": platform.node(),
+            "cpuModel": platform.processor() or f"{platform.machine()} Processor",
+            "cpuCores": cpu_cores,
+            "uptime": uptime,
+            "totalRam": total_ram,
+            "freeRam": free_ram
+        }
+        self._send_json(data)
+
+    def _handle_sys_cpu(self):
+        global HAS_PSUTIL, _last_cpu_idle, _last_cpu_total
+        usage = 0.0
+
+        if HAS_PSUTIL:
+            usage = psutil.cpu_percent(interval=None)
+        else:
+            # Fallback para Linux via /proc/stat
+            try:
+                with open('/proc/stat', 'r') as f:
+                    fields = [float(x) for x in f.readline().split()[1:]]
+                    idle = fields[3] + fields[4]
+                    total = sum(fields)
+                    
+                    diff_idle = idle - _last_cpu_idle
+                    diff_total = total - _last_cpu_total
+                    
+                    if diff_total > 0:
+                        usage = round((1.0 - diff_idle / diff_total) * 100, 1)
+                    
+                    _last_cpu_idle = idle
+                    _last_cpu_total = total
+            except Exception:
+                usage = 0.0
+
+        self._send_json({"usage": usage})
+
+    def _handle_sys_disk(self):
+        global HAS_PSUTIL
+        total, used, free = 0, 0, 0
+
+        if HAS_PSUTIL:
+            disk = psutil.disk_usage('/')
+            total, used, free = disk.total, disk.used, disk.free
+        else:
+            try:
+                st = os.statvfs('/')
+                total = st.f_blocks * st.f_frsize
+                free = st.f_bavail * st.f_frsize
+                used = total - free
+            except Exception:
+                pass
+
+        self._send_json({"total": total, "used": used, "free": free})
+
+    def _send_json(self, data):
+        body = json.dumps(data).encode("utf-8")
+        self._send_response(200, body, {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*"
+        })
+
     # ── Proxy LLM ─────────────────────────────────────────────
     def _proxy_to_llm(self, parsed):
         length = self.headers.get("Content-Length")
         body   = self.rfile.read(int(length)) if length else b""
 
-        # Para providers cloud precisamos adaptar o body
-        # porque o Ollama usa um formato ligeiramente diferente do OpenAI
         if LLM_PROVIDER in PROVIDER_URLS:
             target_url   = PROVIDER_URLS[LLM_PROVIDER]
             adapted_body = self._adapt_body_for_openai(body)
@@ -97,12 +203,10 @@ class Handler(BaseHTTPRequestHandler):
                 "Content-Type":  "application/json",
                 "Authorization": f"Bearer {API_KEY}",
             }
-            # OpenRouter exige este header para identificar o app
             if LLM_PROVIDER == "openrouter":
                 headers["HTTP-Referer"] = "https://signalis-os.local"
                 headers["X-Title"]      = "SIGNALIS-OS"
         else:
-            # Ollama local — repassa o body sem alterar
             adapted_body = body
             target_path  = parsed.path.replace("/api/ollama", "/api", 1) or "/"
             target_url   = f"http://{OLLAMA_HOST}:{OLLAMA_PORT}{target_path}"
@@ -114,11 +218,9 @@ class Handler(BaseHTTPRequestHandler):
             target_url, data=adapted_body, headers=headers, method=self.command
         )
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=None) as resp:
                 resp_body = resp.read()
 
-                # Para providers cloud, converte a resposta de volta
-                # para o formato que o agent.js espera (formato Ollama)
                 if LLM_PROVIDER in PROVIDER_URLS:
                     resp_body = self._adapt_response_to_ollama(resp_body)
 
@@ -135,41 +237,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send_error(502, f"Falha ao contactar o provider LLM ({LLM_PROVIDER}): {exc}")
 
     def _adapt_body_for_openai(self, raw_body: bytes) -> bytes:
-        """
-        O agent.js envia o body no formato Ollama:
-          { model, messages, stream, format }
-        
-        Os providers OpenAI-compatíveis esperam:
-          { model, messages, stream, response_format }
-        
-        Esta função faz a conversão.
-        """
         try:
             data = json.loads(raw_body)
         except Exception:
-            return raw_body  # se não for JSON válido, passa como está
+            return raw_body
 
-        # Ollama usa "format": "json" → OpenAI usa "response_format": {"type": "json_object"}
         if data.get("format") == "json":
             data.pop("format", None)
             data["response_format"] = {"type": "json_object"}
 
-        # Remove campos exclusivos do Ollama que providers cloud não entendem
         data.pop("options", None)
         data.pop("keep_alive", None)
 
         return json.dumps(data).encode("utf-8")
 
     def _adapt_response_to_ollama(self, raw_body: bytes) -> bytes:
-        """
-        Providers cloud respondem no formato OpenAI:
-          { choices: [{ message: { role, content } }] }
-        
-        O agent.js espera o formato Ollama:
-          { message: { role, content } }
-        
-        Esta função faz a conversão.
-        """
         try:
             data    = json.loads(raw_body)
             choices = data.get("choices", [])
@@ -181,7 +263,7 @@ class Handler(BaseHTTPRequestHandler):
             }
             return json.dumps(ollama_fmt).encode("utf-8")
         except Exception:
-            return raw_body  # se falhar, devolve original
+            return raw_body
 
     # ── Proxy DuckDuckGo ───────────────────────────────────────
     def _proxy_to_duckduckgo(self, parsed):
@@ -224,13 +306,21 @@ if __name__ == "__main__":
     print(f"╔══════════════════════════════════════╗")
     print(f"║  SIGNALIS-OS // SERVIDOR             ║")
     print(f"╠══════════════════════════════════════╣")
-    print(f"║  URL    : http://127.0.0.1:{PORT:<5}      ║")
-    print(f"║  LLM    : {LLM_PROVIDER.upper():<28} ║")
-    print(f"║  API KEY: {'configurada' if API_KEY else 'NÃO CONFIGURADA':<28} ║")
-    print(f"╚══════════════════════════════════════╝")
+    print(f"║  PORTA LOCAL : {PORT:<21} ║")
+    print(f"║  LLM PROVIDER: {LLM_PROVIDER.upper():<21} ║")
 
-    if LLM_PROVIDER in PROVIDER_URLS and not API_KEY:
-        print(f"\n[AVISO] Provider '{LLM_PROVIDER}' selecionado mas LLM_API_KEY não está definida.")
-        print(f"        Configure via: export LLM_API_KEY=sua-chave-aqui\n")
+    # ── Abertura de Túnel Público Automático ──
+    try:
+        from pyngrok import ngrok, conf
+        conf.get_default().auth_token = "3HaTLV9pkMByvDXlYsrFqoJJG1j_6ixupoASXfN8abZyiExRi"
+        # Abre o túnel público apontando para a porta do servidor
+        public_tunnel = ngrok.connect(PORT)
+        print(f"║  URL PÚBLICA : {public_tunnel.public_url:<21} ║")
+    except ImportError:
+        print(f"║  TUNNEL      : pyngrok não instalado  ║")
+    except Exception as e:
+        print(f"║  TUNNEL ERRO : {str(e)[:21]:<21} ║")
+
+    print(f"╚══════════════════════════════════════╝\n")
 
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

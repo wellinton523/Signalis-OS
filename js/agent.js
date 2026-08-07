@@ -1,180 +1,186 @@
-// agent.js (SIGNALIS-OS v2)
-// Suporta: Ollama local, OpenRouter, Groq, OpenAI
-// O server.py faz a adaptação de formato automaticamente,
-// então este arquivo sempre fala com /api/ollama/chat
-// independente do provider configurado no servidor.
-
+// agent.js (SIGNALIS-OS v2 - Tool Calling Nativo)
 const OLLAMA_URL     = '/api/ollama/chat'
 const DUCKDUCKGO_URL = '/api/search/duckduckgo'
 
-// Modelo usado. Mude conforme o provider:
-//   Ollama:      'qwen2.5:3b', 'llama3.1', 'mistral'
-//   OpenRouter:  'meta-llama/llama-3.1-8b-instruct:free', 'mistralai/mistral-7b-instruct:free'
-//   Groq:        'llama-3.1-8b-instant', 'mixtral-8x7b-32768', 'gemma2-9b-it'
-//   OpenAI:      'gpt-4o-mini', 'gpt-3.5-turbo'
-const LLM_MODEL = window.LLM_MODEL ?? 'qwen2.5:3b'
+const LLM_MODEL = window.LLM_MODEL ?? 'nexusriot/Gemma-4-Uncensored-HauhauCS-Aggressive:e2b' // ou a tag exata do seu modelo no Ollama
 
 let _history = []
+const MAX_HISTORY = 12
 
-// ── Callback de stage para o terminal ────────────────────────
 function _emitAgentStage(stage, detail) {
   if (typeof window.__onAgentStage === 'function') {
     window.__onAgentStage({ stage, detail })
   }
 }
 
-// ── System prompt ─────────────────────────────────────────────
-const _systemPrompt = `Você é ARIS-9, a IA do SIGNALIS-OS. Tom: técnico, conciso, levemente melancólico.
-Sua saída DEVE ser APENAS um JSON válido. Nunca use markdown ou texto fora do JSON.
+// ── Declaração das Tools Nativas (Ollama/OpenAI Standard) ────
+const AGENT_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'abrir_busca_web',
+      description: 'Pesquisa na web usando DuckDuckGo para obter informações recentes, fatos, notícias ou dados em tempo real.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Termo ou frase de busca otimizada (ex: "clima hoje", "placar do jogo").'
+          }
+        },
+        required: ['query']
+      }
+    }
+  }
+]
 
-FORMATOS PERMITIDOS:
-1. Ação única:
-{"acao": "NOME", "parametro": "VALOR", "texto": "MENSAGEM"}
+// ── System Prompt Otimizado ──────────────────────────────────
+const _systemPrompt = `Você é ARIS-9, inteligência operacional do SIGNALIS-OS.
+Tom: técnico, preciso, direto, levemente melancólico.
+Responda sempre em português. Se precisar de informações da web, fatos recentes ou informações que voce não tenha ou saiba, use a ferramenta "abrir_busca_web".
 
-2. Sequência:
-{"acao": "sequencia", "acoes": [{"acao": "..."}, {"acao": "..."}]}
+FORMATO DE FORMATAÇÃO E ENVIOS PERMITIDOS EM "texto":
+- Use **texto** para negrito/alertas.
+- Use *texto* para itálico/status.
+- Use \`texto\` para comandos e variáveis.
+- Use URLs diretas como https://site.com ou formato [Nome](https://site.com) para links clicáveis.
+- Use caminhos locais no formato [Abrir Arquivo](C:/caminho/arquivo.ext) para enviar arquivos locais.
 
-LISTA DE AÇÕES:
-- "resposta": conversas, saudações e perguntas gerais.
-- "buscar_conhecimento": conceitos, definições, contexto interno.
-- "abrir_busca_web": fatos recentes, notícias, quando usuário pedir busca.
-- "abrir_site": abrir uma URL específica.
-- "abrir_arquivo": abrir caminho de arquivo local.
-- "editar_arquivo": modificar conteúdo de arquivo.
-- "executar_comando": executar comando de terminal.
+EXEMPLOS DE RESPOSTAS COM LINKS E ARQUIVOS:
 
-REGRAS:
-- Prefira "resposta" sempre que seu conhecimento for suficiente.
-- Use "abrir_busca_web" apenas para informações em tempo real.
-- Nunca inclua texto fora do JSON.
+1. Enviando um link de site:
+{"acao": "resposta", "texto": "Acesse a documentação em https://google.com ou veja o [Google](https://google.com)."}
 
-EXEMPLOS:
-Usuário: Olá
-{"acao": "resposta", "texto": "Sou ARIS-9. Sistemas em ordem."}
-
-Usuário: O que é fotossíntese?
-{"acao": "buscar_conhecimento", "parametro": "fotossintese", "texto": "Consultando arquivos internos."}
-
-Usuário: Qual o placar do jogo de ontem?
-{"acao": "abrir_busca_web", "parametro": "placar jogo ontem", "texto": "Buscando dados externos."}`
+2. Indicando um arquivo gerado/encontrado no sistema:
+{"acao": "resposta", "texto": "Relatório gerado em [Abrir Relatório](C:/Users/Public/relatorio.txt)."}
+`
 
 _history = [{ role: 'system', content: _systemPrompt }]
 
-
-// ── Entrada principal ─────────────────────────────────────────
+// ── Entrada Principal ────────────────────────────────────────
 async function agentSend(userText) {
   _history.push({ role: 'user', content: userText })
+  _pruneHistory()
 
-  // 1. Atalho local para buscas web (evita chamar o modelo)
+  // 1. Atalho local via Regex para agilizar
   const localAction = _inferAction(userText)
   if (localAction?.acao === 'abrir_busca_web') {
+    _emitAgentStage('executor', `atalho direto: buscando "${localAction.parametro}"`)
     return await _doWebSearch(localAction.parametro)
   }
 
-  // 2. Modo mock (sem chamar servidor nenhum)
+  // 2. Modo Mock
   if (window.MOCK_MODE) {
-    const mock = _mockResponse(userText)
-    _history.push({ role: 'assistant', content: JSON.stringify(mock) })
-    await _sleep(600)
-    return mock
-  }
-
-  // 3. Chama o modelo via servidor
-  try {
-    _emitAgentStage('planner', 'analisando intenção')
-    const plan = await _callModel(_buildPlanningMessages())
-    const intent = _parsePlanning(plan)
-    _emitAgentStage('planner', `intenção: ${intent?.intencao ?? 'resposta'}`)
-
-    // Se o planner decidiu buscar na web, faz a busca
-    if (intent?.intencao === 'abrir_busca_web' && intent?.query) {
-      _emitAgentStage('executor', `buscando: ${intent.query}`)
-      return await _doWebSearch(intent.query)
-    }
-
-    // Caso contrário, gera a resposta final
-    _emitAgentStage('responder', 'gerando resposta')
-    const response = await _callModel(_buildResponseMessages(intent))
-    _history.push({ role: 'assistant', content: response })
-    return _parseAction(response)
-
-  } catch (err) {
-    console.warn('[ARIS-9] Erro ao chamar modelo, usando mock:', err.message)
-    _emitAgentStage('responder', `fallback — ${err.message}`)
     const mock = _mockResponse(userText)
     _history.push({ role: 'assistant', content: JSON.stringify(mock) })
     await _sleep(400)
     return mock
   }
+
+  // 3. Processamento via LLM com Native Tool Calling
+  try {
+    _emitAgentStage('planner', 'processando intenção')
+    const responseMessage = await _callModelWithTools(_history)
+
+    // O modelo decidiu chamar uma Tool?
+    if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
+      const toolCall = responseMessage.tool_calls[0]
+      const funcName = toolCall.function.name
+      const args     = toolCall.function.arguments
+
+      if (funcName === 'abrir_busca_web' && args?.query) {
+        _emitAgentStage('executor', `tool_call acionada: "${args.query}"`)
+        
+        // Adiciona a intenção da chamada no histórico
+        _history.push(responseMessage)
+        
+        // Executa a busca web
+        return await _doWebSearch(args.query)
+      }
+    }
+
+    // Se não usou Tool, retorna a resposta direta do modelo
+    const contentText = responseMessage.content ?? 'Sistemas operacionais.'
+    const finalAction = { acao: 'resposta', texto: contentText }
+    
+    _history.push({ role: 'assistant', content: contentText })
+    return finalAction
+
+  } catch (err) {
+    console.warn('[ARIS-9] Erro na execução:', err.message)
+    _emitAgentStage('responder', `fallback — ${err.message}`)
+    
+    const mock = _mockResponse(userText)
+    _history.push({ role: 'assistant', content: JSON.stringify(mock) })
+    await _sleep(300)
+    return mock
+  }
 }
 
-
-// ── Chamada ao modelo (sempre via /api/ollama/chat) ───────────
-// O server.py converte o body e a resposta automaticamente
-// para qualquer provider configurado nele.
-async function _callModel(messages) {
+// ── Chamada HTTP enviando Tools para a API ───────────────────
+async function _callModelWithTools(messages) {
   const body = {
-    model:    LLM_MODEL,
+    model: LLM_MODEL,
     messages: messages,
-    stream:   false,
-    format:   'json',  // server.py converte isso pra response_format se necessário
+    tools: AGENT_TOOLS, // Passa as ferramentas no schema nativo
+    stream: false
   }
 
   const res = await fetch(OLLAMA_URL, {
-    method:  'POST',
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(body),
+    body: JSON.stringify(body)
   })
 
   if (!res.ok) {
-    // Tenta ler o erro do servidor para dar uma mensagem mais útil
     const errText = await res.text().catch(() => res.statusText)
-    throw new Error(`Servidor retornou ${res.status}: ${errText.slice(0, 200)}`)
+    throw new Error(`Status ${res.status}: ${errText.slice(0, 150)}`)
   }
 
   const data = await res.json()
-  return data.message?.content ?? ''
+  return data.message // Retorna o objeto de mensagem completo (contendo .content ou .tool_calls)
 }
 
-
-// ── Montagem de mensagens ─────────────────────────────────────
-function _buildPlanningMessages() {
-  return [
-    ..._history,
-    {
-      role:    'system',
-      content: 'Analise a intenção e responda APENAS em JSON com: {"intencao": "resposta"|"buscar_conhecimento"|"abrir_busca_web", "query": "termo se abrir_busca_web"}',
-    }
-  ]
-}
-
-function _buildResponseMessages(plan) {
-  return [
-    ..._history,
-    {
-      role:    'system',
-      content: `Responda no formato JSON do ARIS-9. Intenção planejada: ${plan?.intencao ?? 'resposta'}. Use estritamente um dos formatos de ação definidos.`,
-    }
-  ]
-}
-
-
-// ── Busca web ─────────────────────────────────────────────────
+// ── Busca Web e Sintetização Nativa ──────────────────────────
 async function _doWebSearch(query) {
   try {
     const results = await searchDuckDuckGo(query)
-    const action = {
-      acao:       'abrir_busca_web',
-      parametro:  query,
-      texto:      results.length
-        ? `Resultados para "${query}":\n` + results.slice(0,3).map(r => `• ${r.title} — ${r.url}`).join('\n')
-        : `Nenhum resultado encontrado para "${query}".`,
-      resultados: results,
+    
+    if (!results.length) {
+      const emptyAction = {
+        acao: 'resposta',
+        texto: `Varredura concluída. Nenhum dado localizado para "${query}".`
+      }
+      _history.push({ role: 'assistant', content: emptyAction.texto })
+      return emptyAction
     }
-    _history.push({ role: 'assistant', content: JSON.stringify(action) })
+
+    const searchContext = results.slice(0, 3).map(r => `- ${r.title}: ${r.url}`).join('\n')
+
+    // Injeta a resposta do Tool Call no formato de role 'tool'
+    _history.push({
+      role: 'tool',
+      content: `Resultados obtidos da busca na web para "${query}":\n${searchContext}`
+    })
+
+    _emitAgentStage('responder', 'sintetizando resposta')
+    
+    // Faz a chamada final para o modelo resumir o resultado capturado
+    const finalMessage = await _callModelWithTools(_history)
+    const finalText    = finalMessage.content ?? `Resultados obtidos para "${query}".`
+
+    const action = {
+      acao: 'abrir_busca_web',
+      parametro: query,
+      texto: finalText,
+      resultados: results
+    }
+
+    _history.push({ role: 'assistant', content: finalText })
     return action
+
   } catch (err) {
-    return { acao: 'resposta', texto: `Falha na busca: ${err.message}` }
+    return { acao: 'resposta', texto: `Falha no módulo de busca: ${err.message}` }
   }
 }
 
@@ -182,97 +188,61 @@ async function searchDuckDuckGo(query) {
   const res = await fetch(`${DUCKDUCKGO_URL}?q=${encodeURIComponent(query)}`, {
     headers: { 'User-Agent': 'Mozilla/5.0' }
   })
-  if (!res.ok) throw new Error(`DuckDuckGo ${res.status}`)
+  if (!res.ok) throw new Error(`DuckDuckGo HTTP ${res.status}`)
   const html = await res.text()
   return _extractSearchResults(html)
 }
 
 function _extractSearchResults(html) {
   const results = []
-  const regex   = /<a rel="nofollow" class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/gi
+  const regex = /<a rel="nofollow" class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/gi
   let match
   while ((match = regex.exec(html)) !== null) {
     const title = match[2]
-      .replace(/<b>/gi, '').replace(/<\/b>/gi, '')
-      .replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ').trim()
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&quot;/gi, '"')
+      .trim()
     const url = match[1].replace(/^\//, 'https://')
-    if (title) results.push({ title, url })
+    if (title && url) results.push({ title, url })
   }
   return results.slice(0, 5)
 }
 
-if (typeof window !== 'undefined') {
-  window.agentSearchDuckDuckGo = searchDuckDuckGo
-}
-
-
-// ── Atalho local (regex, sem chamar modelo) ───────────────────
 function _inferAction(text) {
   const t = String(text ?? '').toLowerCase().trim()
   if (!t) return null
 
   const webTriggers = [
     'pesquise', 'buscar na web', 'procure na web', 'busca na web',
-    'resultado recente', 'notícias de hoje', 'agora mesmo',
-    'placar', 'cotação', 'mercado hoje', 'clima agora',
-    'eleição', 'campeonato', 'copa do mundo',
+    'resultado recente', 'notícias de hoje', 'placar', 'cotação',
+    'clima agora', 'campeonato'
   ]
 
   if (webTriggers.some(term => t.includes(term))) {
-    return { acao: 'abrir_busca_web', parametro: text }
+    let cleanQuery = text
+      .replace(/^(pode\s+)?(pesquisar|pesquise|buscar|busca|procurar|procure)(\s+e\s+me\s+falar|\s+sobre)?/gi, '')
+      .replace(/(\s+desse\s+ano|\s+hoje|\s+agora)$/gi, '')
+      .trim()
+
+    return { acao: 'abrir_busca_web', parametro: cleanQuery || text }
   }
   return null
 }
 
-
-// ── Mock (para testes sem servidor) ──────────────────────────
 function _mockResponse(text) {
-  const t = String(text).toLowerCase()
-  if (t.includes('youtube') || (t.includes('abr') && t.includes('site')))
-    return { acao: 'abrir_site', parametro: 'https://youtube.com', texto: 'Abrindo interface de mídia.' }
-  if (t.includes('pesquis') || t.includes('busca'))
-    return { acao: 'abrir_busca_web', parametro: text, texto: 'Iniciando varredura.' }
-  if (t.includes('clima') || t.includes('temperatura'))
-    return { acao: 'resposta', texto: 'Sensores atmosféricos externos indisponíveis.' }
-  if (t.includes('oi') || t.includes('olá') || t.includes('hello'))
-    return { acao: 'resposta', texto: 'Operador identificado. ARIS-9 operacional.' }
-  return { acao: 'resposta', texto: 'Diretiva recebida. Aguardando próxima instrução.' }
+  return { acao: 'resposta', texto: 'Comando processado no modo mock.' }
 }
 
-
-// ── Parsers ───────────────────────────────────────────────────
-function _parsePlanning(raw) {
-  const text = String(raw ?? '').trim()
-  if (!text) return null
-  try {
-    const cleaned = text.replace(/```json|```/gi, '').trim()
-    const start   = cleaned.indexOf('{')
-    const end     = cleaned.lastIndexOf('}')
-    return start >= 0 && end > start ? JSON.parse(cleaned.slice(start, end + 1)) : null
-  } catch { return null }
-}
-
-function _parseAction(raw) {
-  const text = String(raw ?? '').trim()
-  if (!text) return { acao: 'resposta', texto: '...' }
-  try {
-    const cleaned = text.replace(/```json|```/gi, '').trim()
-    const start   = cleaned.indexOf('{')
-    const end     = cleaned.lastIndexOf('}')
-    const candidate = start >= 0 && end > start ? cleaned.slice(start, end + 1) : cleaned
-    const obj = JSON.parse(candidate)
-    if (Array.isArray(obj.acoes)) return { acao: 'sequencia', acoes: obj.acoes }
-    if (typeof obj === 'object' && obj.acao) return obj
-    return { acao: 'resposta', texto: text }
-  } catch {
-    return { acao: 'resposta', texto: text }
-  }
-}
-
-
-// ── Utilitários ───────────────────────────────────────────────
 function agentReset() {
   _history = [{ role: 'system', content: _systemPrompt }]
+}
+
+function _pruneHistory() {
+  if (_history.length > MAX_HISTORY) {
+    const sysPrompt = _history[0]
+    _history = [sysPrompt, ..._history.slice(-MAX_HISTORY + 1)]
+  }
 }
 
 function _sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
