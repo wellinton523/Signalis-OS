@@ -111,9 +111,13 @@
     </div>
   </template>
 
+  <!-- ── CONTAINER DE NOTIFICAÇÕES (TOAST) ──────────────── -->
+  <div id="notification-container" aria-live="polite" aria-atomic="true"></div>
+
   <!-- ── SCRIPTS ─────────────────────────────────────────── -->
   <!-- 1. mock-api.js PRIMEIRO — cria window.api antes de tudo -->
   <script src="js/mock-api.js"></script>
+  <script src="js/notifications.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/windowManager.js"></script>
   <script src="js/core/permissions.js"></script>

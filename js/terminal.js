@@ -71,6 +71,11 @@ async function _onSubmit(raw) {
 
   _appendLine(`<span class="t-cmd">> ${_parseMarkdown(escHtml(raw))}</span>`)
 
+  // Solicita permissão nativa de notificação silenciosamente na 1ª interação real
+  if (typeof window.requestNativePermission === 'function') {
+    window.requestNativePermission().catch(() => {})
+  }
+
   if (actionSuffix) {
     const handled = await _processSuffixAction(actionSuffix, text)
     if (handled) return
@@ -498,9 +503,30 @@ async function _handleAgentAction(action) {
         })
       }
       _typeLine(action.texto ?? '...', 'aris')
+      _notifyAgentResponse(action)
       break
     }
   }
+}
+
+// Dispara toast/notificação nativa/beep ao final de uma resposta do ARIS-9.
+// Escolhe tom pelo conteúdo (erro, aviso, sucesso, info) e trunca preview.
+function _notifyAgentResponse(action) {
+  if (typeof window.showNotification !== 'function') return
+  const raw = String(action?.texto ?? '').trim()
+  if (!raw) return
+
+  const lower = raw.toLowerCase()
+  let type = 'success'
+  if (/(falha|erro|não foi possível|nao foi possivel|fail)/i.test(lower))       type = 'error'
+  else if (/(atenção|atencao|cuidado|aviso|verifique|confirme)/i.test(lower))    type = 'warn'
+  else if (/(concluí|conclui|pronto|feito|executad|abrindo|tocando)/i.test(lower)) type = 'success'
+  else type = 'info'
+
+  const stripped = raw.replace(/[*`_>#-]+/g, ' ').replace(/\s+/g, ' ').trim()
+  const preview  = stripped.length > 140 ? stripped.slice(0, 137) + '…' : stripped
+
+  window.showNotification('ARIS-9', preview, type)
 }
 
 function _showAgentAction(action) {
