@@ -10,9 +10,27 @@
     /* Ajustes para rodar no browser (sem frame nativo do Electron) */
     #titlebar { -webkit-app-region: none; cursor: default; }
     body { overflow: hidden; }
+    #auth-overlay { position:fixed; inset:0; z-index:9999; display:grid; place-items:center; background:#05090d; }
+    #auth-overlay[hidden] { display:none; }
+    .auth-card { width:320px; padding:28px; border:1px solid #1d89a8; background:#09141b; box-shadow:0 0 30px rgba(0,240,255,.18); font-family:'Share Tech Mono',monospace; color:#d9faff; }
+    .auth-card h1 { font-size:18px; margin:0 0 18px; color:#6ee7f9; }
+    .auth-card input { box-sizing:border-box; width:100%; margin:7px 0; padding:10px; color:#d9faff; background:#05090d; border:1px solid #276f80; font:inherit; }
+    .auth-card button { width:100%; margin-top:12px; padding:10px; cursor:pointer; color:#071116; background:#6ee7f9; border:0; font:inherit; }
+    #auth-error { min-height:18px; margin:8px 0 0; color:#ff8090; font-size:12px; }
+    #remote-access-toggle.remote-active { color:#8cffb2; }
+    #unlimited-steps-toggle.unlimited-active { color:#f9c74f; }
   </style>
 </head>
 <body>
+  <div id="auth-overlay" hidden>
+    <form id="auth-form" class="auth-card">
+      <h1>SIGNALIS-OS // ACESSO PROTEGIDO</h1>
+      <input id="auth-username" autocomplete="username" placeholder="usuário" required>
+      <input id="auth-password" type="password" autocomplete="current-password" placeholder="senha" required>
+      <button type="submit">ENTRAR NO SISTEMA</button>
+      <div id="auth-error"></div>
+    </form>
+  </div>
 
   <!-- ── BARRA DE TÍTULO ──────────────────────────────────── -->
   <div id="titlebar">
@@ -34,6 +52,8 @@
   <div id="taskbar">
     <button class="taskbar-btn" onclick="openTerminal()">[ TERMINAL ]</button>
     <button class="taskbar-btn" onclick="openSysMon()">[ SYSMON ]</button>
+    <button class="taskbar-btn" id="remote-access-toggle">[ ACESSO REMOTO: DESATIVADO ]</button>
+    <button class="taskbar-btn" id="unlimited-steps-toggle">[ AÇÕES ILIMITADAS: DESATIVADO ]</button>
     <button class="taskbar-btn" id="btn-wallpaper" onclick="toggleWallpaper()">[ WALLPAPER ON ]</button>
     <span class="taskbar-clock" id="clock">00:00:00</span>
   </div>
@@ -94,16 +114,46 @@
   <!-- ── SCRIPTS ─────────────────────────────────────────── -->
   <!-- 1. mock-api.js PRIMEIRO — cria window.api antes de tudo -->
   <script src="js/mock-api.js"></script>
+  <script src="js/auth.js"></script>
   <script src="js/windowManager.js"></script>
+  <script src="js/core/permissions.js"></script>
+  <script src="js/core/ToolManager.js"></script>
+  <script>
+    window.toolsReady = window.signalisAuth.whenAuthenticated()
+      .then(() => window.toolManager.discover())
+      .catch(error => console.warn('[SIGNALIS-OS] Falha ao carregar tools:', error))
+  </script>
   <script src="js/agent.js"></script>
   <script src="js/terminal.js"></script>
   <script src="js/sysmon.js"></script>
   <script src="js/desktop.js"></script>
 
   <script>
+    // ── Ações Ilimitadas ──────────────────────────────────────
+    window.UNLIMITED_STEPS = false
+
+    function _setUnlimitedSteps(enabled) {
+      window.UNLIMITED_STEPS = enabled
+      const btn = document.getElementById('unlimited-steps-toggle')
+      if (!btn) return
+      btn.textContent = enabled ? '[ AÇÕES ILIMITADAS: ATIVO ]' : '[ AÇÕES ILIMITADAS: DESATIVADO ]'
+      btn.classList.toggle('unlimited-active', enabled)
+    }
+
+    document.getElementById('unlimited-steps-toggle').addEventListener('click', () => {
+      _setUnlimitedSteps(!window.UNLIMITED_STEPS)
+    })
+
+    // Ativa automaticamente para usuário GOD ao autenticar
+    window.signalisAuth.whenAuthenticated().then(status => {
+      if (status?.permissionLevel === 'god') {
+        _setUnlimitedSteps(true)
+      }
+    })
+
     // Abre o terminal automaticamente ao carregar
     window.addEventListener('load', () => {
-      setTimeout(openTerminal, 300)
+      window.toolsReady.then(() => setTimeout(openTerminal, 300))
     })
   </script>
 

@@ -23,6 +23,19 @@ from pathlib import Path
 
 # ── Configurações padrão ──────────────────────────────────────
 ROOT         = Path(__file__).resolve().parent
+
+def load_dotenv(path):
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+load_dotenv(ROOT / ".env")
+
 PORT         = int(os.getenv("PORT", "8000"))
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
 LLM_API_KEY  = os.getenv("LLM_API_KEY", "")

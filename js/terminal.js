@@ -143,7 +143,12 @@ async function _runDirect(cmdRaw) {
     case 'open':     await _cmdOpen(args);      break
     case 'kill':     await _cmdKill(args);      break
     case 'shutdown': await _cmdShutdown(args);  break
+    case 'system':   await _cmdSystem(args);    break
     case 'cmd':      await _cmdPassthrough(cmdRaw.slice(3).trim()); break
+    case 'ps':       await _cmdPs();            break
+    case 'mem':      await _cmdMem(args);       break
+    case 'tools':    _cmdTools(args);           break
+    case 'clip':     await _cmdClip(args);      break
     case 'reset':
       agentReset()
       _appendLine('<span class="t-dim">Memória de sessão do ARIS-9 limpa.</span>')
@@ -162,17 +167,30 @@ function _cmdHelp() {
     '  <span class="t-aris">`texto`</span>           Código / Comando inline',
     '  <span class="t-aris">*`texto`*</span>         Itálico com estilo de código',
     '<span class="t-dim">── COMANDOS DIRETOS ─────────────────────────────</span>',
-    '  .help                     esta lista',
-    '  .clear                    limpa o terminal',
-    '  .sysinfo                  informações do sistema',
-    '  .ls [pasta]               lista arquivos',
-    '  .cd &lt;pasta&gt;               muda diretório',
-    '  .open &lt;caminho ou URL&gt;    abre arquivo ou site',
-    '  .kill &lt;PID&gt;               encerra processo',
-    '  .shutdown [segundos]      desliga o PC (padrão: 60s)',
-    '  .shutdown cancel          cancela o desligamento',
-    '  .cmd &lt;comando&gt;            executa no CMD/bash do sistema',
-    '  .reset                    limpa memória do ARIS-9',
+    '  .help                            esta lista',
+    '  .clear                           limpa o terminal',
+    '  .sysinfo                         informações do sistema',
+    '  .ls [pasta]                      lista arquivos',
+    '  .cd &lt;pasta&gt;                      muda diretório',
+    '  .open &lt;caminho ou URL&gt;           abre arquivo ou site',
+    '  .kill &lt;PID&gt;                      encerra processo',
+    '  .ps                              lista processos em execução',
+    '  .shutdown [segundos]             desliga o PC (padrão: 60s)',
+    '  .shutdown cancel                 cancela o desligamento',
+    '  .system permission               mostra o nível de permissão',
+    '  .system permission &lt;nível&gt;       altera: restricted, standard, admin ou god',
+    '  .cmd &lt;comando&gt;                   executa no CMD/bash do sistema',
+    '  .tools [categoria]               lista ferramentas registradas',
+    '  .mem list [tag]                  lista memória persistente (filtro por tag)',
+    '  .mem get &lt;chave&gt;                 recupera valor da memória',
+    '  .mem set &lt;chave&gt; &lt;valor&gt; [#tag] armazena na memória',
+    '  .mem del &lt;chave&gt;                 remove da memória',
+    '  .mem search &lt;termo&gt;             busca por texto na memória',
+    '  .mem history [n]                 últimas n tarefas executadas',
+    '  .mem ctx list|save|load          gerencia contextos de conversa',
+    '  .clip get                        lê a área de transferência',
+    '  .clip set &lt;texto&gt;               escreve na área de transferência',
+    '  .reset                           limpa memória de sessão do ARIS-9',
   ]
   lines.forEach(l => _appendLine(l))
 }
@@ -322,7 +340,13 @@ async function _cmdPassthrough(rawCmd) {
 
   _appendLine(`<span class="t-dim">$ ${escHtml(rawCmd)}</span>`)
 
-  const result = await api.exec(rawCmd)
+  let result
+  try {
+    result = await window.toolManager.execute('system.exec', { command: rawCmd }, { source: 'terminal' })
+  } catch (err) {
+    _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    return
+  }
 
   if (result.stdout?.trim()) {
     result.stdout.trim().split('\n').forEach(line => {
@@ -463,9 +487,19 @@ async function _handleAgentAction(action) {
       _appendLine(`<span class="t-aris">${_parseMarkdown(escHtml(action.texto ?? `Atualizando ${action.parametro ?? 'arquivo'}`))}</span>`)
       break
     case 'resposta':
-    default:
+    default: {
+      // Exibe as etapas executadas (tools do ReAct loop) antes da resposta final
+      if (Array.isArray(action.steps) && action.steps.length > 0) {
+        action.steps.forEach(s => {
+          const label = s.error
+            ? `<span class="t-error">[tool] ${escHtml(s.tool)} — erro: ${escHtml(s.error)}</span>`
+            : `<span class="t-dim">[tool] ${escHtml(s.tool)} — ok</span>`
+          _appendLine(label)
+        })
+      }
       _typeLine(action.texto ?? '...', 'aris')
       break
+    }
   }
 }
 
@@ -504,35 +538,74 @@ function _showAgentAction(action) {
       break
     case 'resposta':
     default:
-      message = 'respondendo'
-      className = 't-aris'
-      break
+      // Não exibe "[ARIS-9] respondendo" — a resposta em si já aparece na linha seguinte
+      return
   }
 
   _appendLine(`<span class="${className}">[ARIS-9] ${escHtml(message)}</span>`)
 }
 
 
-// ── Parser de Markdown Estendido ───────────────────────────────
-// ── Parser de Markdown Estendido & Links Clicáveis ───────────────
 function _parseMarkdown(str) {
-  return String(str)
-    // 1. Links embutidos no formato [Texto](https://link.com ou C:/caminho/arquivo.txt)
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, target) => {
-      return `<a href="#" onclick="api.open('${escHtml(target)}'); return false;" style="color: #6ee7f9; text-decoration: underline; cursor: pointer;">${escHtml(label)}</a>`
-    })
-    // 2. URLs diretas (http:// ou https://) fora de tags de código
-    .replace(/(?<!=["'])(https?:\/\/[^\s<]+)/g, (match, url) => {
-      return `<a href="#" onclick="api.open('${escHtml(url)}'); return false;" style="color: #6ee7f9; text-decoration: underline; cursor: pointer;">${escHtml(url)}</a>`
-    })
-    // 3. Itálico com estilo de código: *`texto`*
-    .replace(/\*`([^`]+)`\*/g, '<code style="color: #6ee7f9; font-style: italic; background: rgba(110, 231, 249, 0.1); padding: 2px 4px; border-radius: 3px;">$1</code>')
-    // 4. Negrito: **texto**
-    .replace(/\*\*([^*]+)\*\*/g, '<strong style="color: #ffffff; font-weight: bold;">$1</strong>')
-    // 5. Itálico: *texto*
-    .replace(/\*([^*]+)\*/g, '<em style="color: #00f0ff; font-style: italic;">$1</em>')
-    // 6. Código inline: `texto`
-    .replace(/`([^`]+)`/g, '<code style="color: #38bdf8; background: rgba(56, 189, 248, 0.15); padding: 2px 4px; border-radius: 3px; font-family: monospace;">$1</code>')
+  let text = String(str);
+
+  // Guarda blocos markdown temporariamente para evitar dupla conversão
+  const placeholders = [];
+
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, target) => {
+    const id = placeholders.length;
+
+    const safeTarget = target
+      .replace(/\\/g, "\\\\")
+      .replace(/'/g, "\\'");
+
+    placeholders.push(
+      `<a href="#" onclick="api.open('${safeTarget}');return false;" class="t-link">${escHtml(label)}</a>`
+    );
+
+    return `§LINK${id}§`;
+  });
+
+  // URLs diretas
+  text = text.replace(
+    /\bhttps?:\/\/[^\s<>"')]+/gi,
+    url => {
+      const safe = url
+        .replace(/\\/g, "\\\\")
+        .replace(/'/g, "\\'");
+
+      return `<a href="#" onclick="api.open('${safe}');return false;" class="t-link">${escHtml(url)}</a>`;
+    }
+  );
+
+  // Código itálico
+  text = text.replace(
+    /\*`([^`]+)`\*/g,
+    '<code class="t-code t-code-italic">$1</code>'
+  );
+
+  // Negrito
+  text = text.replace(
+    /\*\*([^*]+)\*\*/g,
+    '<strong>$1</strong>'
+  );
+
+  // Itálico
+  text = text.replace(
+    /\*([^*]+)\*/g,
+    '<em>$1</em>'
+  );
+
+  // Código
+  text = text.replace(
+    /`([^`]+)`/g,
+    '<code class="t-code">$1</code>'
+  );
+
+  // Restaura links markdown
+  text = text.replace(/§LINK(\d+)§/g, (_, i) => placeholders[Number(i)]);
+
+  return text;
 }
 
 function _logTool(name, status, detail = '') {
@@ -574,4 +647,264 @@ function escHtml(str) {
   return String(str)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;')
   .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+}
+
+async function _cmdSystem(args) {
+  if (args[0]?.toLowerCase() !== 'permission') {
+    _appendLine('<span class="t-error">Uso: .system permission [restricted|standard|admin|god]</span>')
+    return
+  }
+
+  const requested = args[1]?.toLowerCase()
+  if (!requested) {
+    _appendLine(`<span class="t-dim">Nível atual: ${escHtml(window.permissionManager.name)}</span>`)
+    return
+  }
+
+  if (requested === 'god') {
+    _appendLine('<span class="t-warn">Para ativar GOD, execute: .system permission god CONFIRM</span>')
+    if (args[2] !== 'CONFIRM') return
+  }
+
+  try {
+    window.permissionManager.setByName(requested)
+    _appendLine(`<span class="t-aris">Nível de permissão alterado para: ${escHtml(window.permissionManager.name)}</span>`)
+  } catch (err) {
+    _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+  }
+}
+
+
+// ── .ps — lista processos ─────────────────────────────────────
+async function _cmdPs() {
+  let procs
+  try {
+    procs = await window.toolManager.execute('system.processes', {}, { source: 'terminal' })
+  } catch (err) {
+    _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    return
+  }
+  if (!Array.isArray(procs) || !procs.length) {
+    _appendLine('<span class="t-dim">Nenhum processo retornado.</span>')
+    return
+  }
+  _appendLine('<span class="t-dim">── PROCESSOS ────── PID ─── MEM% ──</span>')
+  procs.slice(0, 40).forEach(p => {
+    const mem = typeof p.mem === 'number' ? p.mem.toFixed(1) + '%' : '—'
+    _appendLine(`  <span style="color:#c8d8e8">${escHtml(String(p.name).padEnd(30))} ${String(p.pid).padEnd(8)} ${mem}</span>`)
+  })
+  if (procs.length > 40) _appendLine(`<span class="t-dim">... e mais ${procs.length - 40} processo(s)</span>`)
+}
+
+
+// ── .tools — lista tools registradas ──────────────────────────
+function _cmdTools(args) {
+  const filter = args[0]?.toLowerCase() || ''
+  const tools = window.toolManager?.list() ?? []
+  const filtered = filter ? tools.filter(t => t.category?.toLowerCase().includes(filter)) : tools
+
+  if (!filtered.length) {
+    _appendLine(`<span class="t-warn">Nenhuma ferramenta encontrada${filter ? ` para categoria "${escHtml(filter)}"` : ''}.</span>`)
+    return
+  }
+
+  const byCategory = {}
+  filtered.forEach(t => {
+    const cat = t.category || 'geral'
+    ;(byCategory[cat] = byCategory[cat] || []).push(t)
+  })
+
+  Object.entries(byCategory).forEach(([cat, list]) => {
+    _appendLine(`<span class="t-dim">── ${escHtml(cat.toUpperCase())} ──</span>`)
+    list.forEach(t => {
+      const perm = ['RESTRICTED','STANDARD','ADMIN','GOD'][t.permission] ?? '?'
+      _appendLine(`  <span class="t-aris">${escHtml(t.name)}</span> <span class="t-dim">[${perm}]</span> — ${escHtml(t.description)}`)
+    })
+  })
+}
+
+
+// ── .mem — memória persistente ────────────────────────────────
+async function _cmdMem(args) {
+  const sub = args[0]?.toLowerCase()
+
+  if (!sub || sub === 'list') {
+    const tag = args[1] || undefined
+    let entries
+    try {
+      entries = await window.toolManager.execute('memory.list', tag ? { tag } : {}, { source: 'terminal' })
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+      return
+    }
+    if (!entries.length) {
+      _appendLine(`<span class="t-dim">Memória persistente vazia${tag ? ` (tag: ${escHtml(tag)})` : ''}.</span>`)
+      return
+    }
+    _appendLine(`<span class="t-dim">── MEMÓRIA PERSISTENTE${tag ? ' [tag:' + escHtml(tag) + ']' : ''} ───────────────</span>`)
+    entries.forEach(e => {
+      const val  = typeof e.value === 'object' ? JSON.stringify(e.value) : String(e.value)
+      const tags = e.tags?.length ? ` <span class="t-dim">[${e.tags.join(', ')}]</span>` : ''
+      _appendLine(`  <span class="t-aris">${escHtml(e.key)}</span>${tags} = ${escHtml(val)} <span class="t-dim">(${e.updatedAt})</span>`)
+    })
+    return
+  }
+
+  if (sub === 'get') {
+    const key = args[1]
+    if (!key) { _appendLine('<span class="t-error">Uso: .mem get &lt;chave&gt;</span>'); return }
+    try {
+      const r = await window.toolManager.execute('memory.get', { key }, { source: 'terminal' })
+      if (!r.found) _appendLine(`<span class="t-warn">Chave não encontrada: ${escHtml(key)}</span>`)
+      else {
+        const val  = typeof r.value === 'object' ? JSON.stringify(r.value) : String(r.value)
+        const tags = r.tags?.length ? ` <span class="t-dim">[${r.tags.join(', ')}]</span>` : ''
+        _appendLine(`<span class="t-aris">${escHtml(key)}</span>${tags} = ${escHtml(val)}`)
+      }
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  if (sub === 'set') {
+    const key  = args[1]
+    const rest = args.slice(2)
+    // suporte a tags: .mem set chave valor #tag1 #tag2
+    const tagArgs = rest.filter(a => a.startsWith('#')).map(a => a.slice(1))
+    const valArgs = rest.filter(a => !a.startsWith('#'))
+    const value   = valArgs.join(' ')
+    if (!key || !value) { _appendLine('<span class="t-error">Uso: .mem set &lt;chave&gt; &lt;valor&gt; [#tag]</span>'); return }
+    try {
+      await window.toolManager.execute('memory.set', { key, value, tags: tagArgs }, { source: 'terminal' })
+      const tagStr = tagArgs.length ? ` [${tagArgs.join(', ')}]` : ''
+      _appendLine(`<span class="t-dim">Armazenado: ${escHtml(key)}${escHtml(tagStr)} = ${escHtml(value)}</span>`)
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  if (sub === 'del' || sub === 'delete' || sub === 'rm') {
+    const key = args[1]
+    if (!key) { _appendLine('<span class="t-error">Uso: .mem del &lt;chave&gt;</span>'); return }
+    try {
+      const r = await window.toolManager.execute('memory.delete', { key }, { source: 'terminal' })
+      _appendLine(r.deleted
+        ? `<span class="t-dim">Chave removida: ${escHtml(key)}</span>`
+        : `<span class="t-warn">Chave não encontrada: ${escHtml(key)}</span>`)
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  if (sub === 'search') {
+    const query = args.slice(1).join(' ')
+    if (!query) { _appendLine('<span class="t-error">Uso: .mem search &lt;termo&gt;</span>'); return }
+    try {
+      const results = await window.toolManager.execute('memory.search', { query }, { source: 'terminal' })
+      if (!results.length) { _appendLine(`<span class="t-warn">Nenhum resultado para "${escHtml(query)}".</span>`); return }
+      _appendLine(`<span class="t-dim">── RESULTADOS (${results.length}) ──</span>`)
+      results.forEach(e => {
+        const val = typeof e.value === 'object' ? JSON.stringify(e.value) : String(e.value)
+        _appendLine(`  <span class="t-aris">${escHtml(e.key)}</span> = ${escHtml(val)}`)
+      })
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  if (sub === 'history') {
+    const limit = parseInt(args[1] || '10')
+    try {
+      const history = await window.toolManager.execute('memory.history', { limit }, { source: 'terminal' })
+      if (!history.length) { _appendLine('<span class="t-dim">Nenhuma tarefa registrada ainda.</span>'); return }
+      _appendLine('<span class="t-dim">── HISTÓRICO DE TAREFAS ──────────────</span>')
+      history.forEach(h => {
+        const tools = h.tools?.join(', ') || '—'
+        _appendLine(`  <span class="t-dim">${h.at}</span>`)
+        _appendLine(`  <span class="t-aris">ferramentas:</span> ${escHtml(tools)}`)
+        _appendLine(`  ${escHtml(h.summary)}`)
+      })
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  if (sub === 'ctx') {
+    const action = args[1]?.toLowerCase()
+    if (!action || action === 'list') {
+      try {
+        const ctxs = await window.toolManager.execute('memory.context.list', {}, { source: 'terminal' })
+        if (!ctxs.length) { _appendLine('<span class="t-dim">Nenhum contexto salvo.</span>'); return }
+        _appendLine('<span class="t-dim">── CONTEXTOS SALVOS ──────────────────</span>')
+        ctxs.forEach(c => _appendLine(`  <span class="t-aris">${escHtml(c.name)}</span> <span class="t-dim">(${c.savedAt})</span> — ${escHtml(c.preview)}`))
+      } catch (err) {
+        _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+      }
+      return
+    }
+    if (action === 'save') {
+      const name    = args[2]
+      const content = args.slice(3).join(' ')
+      if (!name || !content) { _appendLine('<span class="t-error">Uso: .mem ctx save &lt;nome&gt; &lt;conteúdo&gt;</span>'); return }
+      try {
+        await window.toolManager.execute('memory.context.save', { name, content }, { source: 'terminal' })
+        _appendLine(`<span class="t-dim">Contexto salvo: ${escHtml(name)}</span>`)
+      } catch (err) {
+        _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+      }
+      return
+    }
+    if (action === 'load') {
+      const name = args[2]
+      if (!name) { _appendLine('<span class="t-error">Uso: .mem ctx load &lt;nome&gt;</span>'); return }
+      try {
+        const r = await window.toolManager.execute('memory.context.load', { name }, { source: 'terminal' })
+        if (!r.found) _appendLine(`<span class="t-warn">Contexto não encontrado: ${escHtml(name)}</span>`)
+        else _appendLine(`<span class="t-aris">${escHtml(name)}:</span>\n${escHtml(r.content)}`)
+      } catch (err) {
+        _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+      }
+      return
+    }
+    _appendLine('<span class="t-error">Uso: .mem ctx [list|save|load]</span>')
+    return
+  }
+
+  _appendLine('<span class="t-error">Uso: .mem [list|get|set|del|search|history|ctx] ...</span>')
+}
+
+
+// ── .clip — área de transferência ────────────────────────────
+async function _cmdClip(args) {
+  const sub = args[0]?.toLowerCase()
+
+  if (!sub || sub === 'get') {
+    try {
+      const r = await window.toolManager.execute('system.clipboard.get', {}, { source: 'terminal' })
+      _appendLine(`<span class="t-dim">Área de transferência:</span>`)
+      _appendLine(`<span style="color:#c8d8e8">${escHtml(r.text || '(vazio)')}</span>`)
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  if (sub === 'set') {
+    const text = args.slice(1).join(' ')
+    if (!text) { _appendLine('<span class="t-error">Uso: .clip set &lt;texto&gt;</span>'); return }
+    try {
+      await window.toolManager.execute('system.clipboard.set', { text }, { source: 'terminal' })
+      _appendLine(`<span class="t-dim">Copiado para a área de transferência.</span>`)
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  _appendLine('<span class="t-error">Uso: .clip [get|set &lt;texto&gt;]</span>')
 }
