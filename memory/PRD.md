@@ -2,40 +2,38 @@
 
 ## Problema original
 Melhorar o ARIS-9 no repositório SIGNALIS-OS com:
-1. Raciocínio causal mais profundo (entender porquê + antecipar consequências).
-2. Consciência subjetiva de contexto/tom (urgente → resumo executivo; curioso → detalhes).
-3. Otimização proativa de fluxos (identificar gargalos, sugerir a melhor ordem, montar workflows).
-4. Notificação visual quando chega uma resposta do agente.
+1. Raciocínio causal mais profundo.
+2. Consciência subjetiva de contexto/tom.
+3. Otimização proativa de fluxos.
+4. Notificações quando chegar uma resposta.
 
-## Arquitetura (existente)
+## Arquitetura
 - Frontend vanilla JS/HTML/CSS (SIGNALIS-OS shell + terminal).
-- Backend HTTP customizado em Python (`server.py`, ThreadingHTTPServer).
-- Agente ARIS-9 com padrão ReAct textual em `js/agent.js`.
-- Ferramentas registradas em `window.toolManager`.
+- Backend HTTP customizado (`server.py`, ThreadingHTTPServer).
+- Agente ARIS-9 com ReAct textual em `js/agent.js`.
+- Ferramentas registradas em `window.toolManager` (auto-descoberta em `js/tools/**`).
 
-## O que foi implementado nesta sessão (jan/2026)
-- **Sistema de notificações** (`js/notifications.js` + `#notification-container` em `index.html` + estilos em `css/style.css`):
-  - Toast centralizado no topo, com borda por tipo (success/warn/error/info), botão de fechar e auto-dismiss em 5,2s.
-  - Notification API nativa do navegador — permissão pedida silenciosamente na 1ª mensagem do usuário; só dispara com aba em segundo plano.
-  - Beep discreto via Web Audio API (timbre "console retro") com preferências persistidas em localStorage.
-- **Correção de CSS quebrado** em `.t-code-italic` (regra aninhada inválida).
-- **Novo system prompt do ARIS-9** (`_buildSystemPrompt()`):
-  - Protocolo ReAct preservado (ACTION/ARGS) e catálogo Spotify.
-  - Seção 1: raciocínio causal + pedido de confirmação para ações irreversíveis.
-  - Seção 2: leitura de tom (urgente/curioso/operacional/dúvida/desabafo) → adapta o formato da resposta.
-  - Seção 3: otimização proativa de fluxos (ordem, gargalos, atalhos de 1 passo, sugestão de próximo passo em tarefas complexas).
-  - Seção 4: estilo SIGNALIS-OS (frio, direto, sem exposição de raciocínio interno).
-- **Terminal** (`js/terminal.js`):
-  - Notificação disparada em toda `resposta` final (não em ações intermediárias).
-  - Helper `_notifyAgentResponse()` escolhe o tipo (success/warn/error/info) pelo conteúdo da resposta.
-  - Permissão nativa solicitada silenciosamente na 1ª submissão real do usuário.
+## Implementado (jan/2026)
 
-## Backlog / Próximos passos
-- P1: comando `.notify [on|off|sound|native]` para controlar preferências pelo terminal.
-- P2: extrair notificações e renderização de resposta do agente para módulos próprios (`js/terminal.js` está grande).
-- P2: camada estruturada de classificação de intenção (hoje é 100% via prompt).
+### Fase 1 — Notificações
+- `js/notifications.js`: toast in-app + Notification API nativa + beep via Web Audio.
+- Toast centralizado no topo com borda por tipo (success/warn/error/info) e auto-dismiss.
+- Permissão nativa solicitada silenciosamente na 1ª interação real.
 
-## Testes
-- Sintaxe JS: OK em `notifications.js`, `agent.js`, `terminal.js`.
-- Testes do repositório (`/app/tests/*.test.js`): já quebrados no baseline pré-mudanças — não é regressão introduzida.
-- Verificação visual: toasts renderizando centralizados no topo com bordas coloridas por tipo.
+### Fase 2 — ARIS-9 arquiteto de soluções
+- Novo `_buildSystemPrompt()` cobre raciocínio causal, leitura de tom (urgente/curioso/operacional/dúvida/desabafo) e otimização proativa de fluxos.
+- Pedido de confirmação para ações irreversíveis.
+
+### Fase 3 — Fluxos salvos (macros)
+- `js/tools/automation/macro.js`: 6 tools (`macro.save`, `macro.list`, `macro.get`, `macro.delete`, `macro.run`, `macro.saveLast`) + helper `window.aris9Macros` com `match()` de trigger.
+- Terminal intercepta o texto do usuário e, se casar com um trigger, executa a macro direto (sem LLM).
+- Comando `.macro list|show|run|del|savelast` para gerenciamento manual.
+- ARIS-9 aprendeu a sugerir salvar workflow quando detecta repetição.
+- Armazenamento em `localStorage: aris9_macros`, com contador `runs` por macro.
+- Validado end-to-end via Playwright: save → list → match → run → memory.set executou → contador incrementou → toast disparou.
+
+## Backlog
+- P2: comando `.notify [on|off|sound|native]` para preferências de notificação.
+- P2: painel visual para editar macros (hoje só via terminal ou agente).
+- P2: capturar args reais das ações no histórico (hoje `macro.saveLast` gera args vazios).
+- P2: sugerir triggers automaticamente com base em frases recorrentes.

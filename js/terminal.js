@@ -84,6 +84,43 @@ async function _onSubmit(raw) {
   if (text.startsWith('.')) {
     await _runDirect(text.slice(1).trim())
   } else {
+    // Se o texto casa com o trigger de uma macro salva, executa direto (sem LLM)
+    const macro = window.aris9Macros?.match?.(text)
+    if (macro) {
+      if (_terminalBusy) {
+        _appendLine('<span class="t-error">ARIS-9 PROCESSANDO. AGUARDE.</span>')
+        return
+      }
+      _terminalBusy = true
+      _termInput.disabled = true
+      try {
+        _appendLine(`<span class="t-aris">[macro] disparando *${escHtml(macro.name)}* — ${escHtml(macro.description || 'sem descrição')}</span>`)
+        const r = await window.toolManager.execute('macro.run', { name: macro.name }, { source: 'terminal' })
+        const okCount  = r.results.filter(s => s.ok).length
+        const failCount = r.results.length - okCount
+        r.results.forEach(s => {
+          const label = s.ok
+            ? `<span class="t-dim">[tool] ${escHtml(s.tool)} — ok</span>`
+            : `<span class="t-error">[tool] ${escHtml(s.tool)} — erro: ${escHtml(s.error)}</span>`
+          _appendLine(label)
+        })
+        const summary = failCount === 0
+          ? `Macro *${macro.name}* concluída (${okCount} passo${okCount === 1 ? '' : 's'}).`
+          : `Macro *${macro.name}* finalizada com ${failCount} falha${failCount === 1 ? '' : 's'}.`
+        _appendLine(`<span class="t-aris">${_parseMarkdown(escHtml(summary))}</span>`)
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('ARIS-9', summary.replace(/[*`]/g, ''), failCount === 0 ? 'success' : 'warn')
+        }
+      } catch (err) {
+        _appendLine(`<span class="t-error">Falha ao executar macro: ${escHtml(err.message || err)}</span>`)
+      } finally {
+        _terminalBusy = false
+        _termInput.disabled = false
+        _termInput.focus()
+      }
+      return
+    }
+
     if (_terminalBusy) {
       _appendLine('<span class="t-error">ARIS-9 PROCESSANDO. AGUARDE.</span>')
       return
@@ -154,6 +191,7 @@ async function _runDirect(cmdRaw) {
     case 'mem':      await _cmdMem(args);       break
     case 'tools':    _cmdTools(args);           break
     case 'clip':     await _cmdClip(args);      break
+    case 'macro':    await _cmdMacro(args);    break
     case 'reset':
       agentReset()
       _appendLine('<span class="t-dim">Memória de sessão do ARIS-9 limpa.</span>')
@@ -195,6 +233,13 @@ function _cmdHelp() {
     '  .mem ctx list|save|load          gerencia contextos de conversa',
     '  .clip get                        lê a área de transferência',
     '  .clip set &lt;texto&gt;               escreve na área de transferência',
+    '<span class="t-dim">── FLUXOS SALVOS (MACROS) ──────────────────────</span>',
+    '  .macro list                      lista fluxos/macros salvos',
+    '  .macro show &lt;nome&gt;               mostra detalhes de uma macro',
+    '  .macro run &lt;nome&gt;                executa a macro imediatamente',
+    '  .macro del &lt;nome&gt;                remove uma macro',
+    '  .macro savelast &lt;nome&gt; &lt;trigger&gt; salva a última tarefa como macro',
+    '<span class="t-dim">── OUTROS ──────────────────────────────────────</span>',
     '  .reset                           limpa memória de sessão do ARIS-9',
   ]
   lines.forEach(l => _appendLine(l))
@@ -934,3 +979,97 @@ async function _cmdClip(args) {
 
   _appendLine('<span class="t-error">Uso: .clip [get|set &lt;texto&gt;]</span>')
 }
+
+// ── .macro — fluxos salvos ─────────────────────────────────────
+async function _cmdMacro(args) {
+  const sub = (args[0] || '').toLowerCase()
+
+  if (!sub || sub === 'list' || sub === 'ls') {
+    let list
+    try { list = await window.toolManager.execute('macro.list', {}, { source: 'terminal' }) }
+    catch (err) { _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`); return }
+    if (!list.length) {
+      _appendLine('<span class="t-dim">Nenhum fluxo salvo. Peça ao ARIS-9 para criar um, ou use .macro savelast.</span>')
+      return
+    }
+    _appendLine('<span class="t-dim">── FLUXOS SALVOS ──────────────────────────────</span>')
+    list.forEach(m => {
+      _appendLine(`  <span class="t-aris">${escHtml(m.name)}</span> <span class="t-dim">[trigger:</span> <span class="t-warn">${escHtml(m.trigger)}</span><span class="t-dim">]</span> — ${escHtml(m.description || 'sem descrição')} <span class="t-dim">(${m.steps} passo(s), ${m.runs} exec)</span>`)
+    })
+    return
+  }
+
+  if (sub === 'show' || sub === 'get') {
+    const name = args[1]
+    if (!name) { _appendLine('<span class="t-error">Uso: .macro show &lt;nome&gt;</span>'); return }
+    let r
+    try { r = await window.toolManager.execute('macro.get', { name }, { source: 'terminal' }) }
+    catch (err) { _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`); return }
+    if (!r.found) { _appendLine(`<span class="t-warn">Macro não encontrada: ${escHtml(name)}</span>`); return }
+    _appendLine(`<span class="t-aris">${escHtml(r.name)}</span> <span class="t-dim">[trigger:</span> <span class="t-warn">${escHtml(r.trigger)}</span><span class="t-dim">]</span>`)
+    _appendLine(`  ${escHtml(r.description || 'sem descrição')}`)
+    _appendLine(`  <span class="t-dim">criado: ${escHtml(r.createdAt)} — execs: ${r.runs || 0}</span>`)
+    r.steps.forEach((s, i) => {
+      const argsStr = Object.keys(s.args || {}).length ? ` ${JSON.stringify(s.args)}` : ''
+      _appendLine(`    <span class="t-dim">${i + 1}.</span> <span class="t-aris">${escHtml(s.tool)}</span><span class="t-dim">${escHtml(argsStr)}</span>`)
+    })
+    return
+  }
+
+  if (sub === 'run') {
+    const name = args[1]
+    if (!name) { _appendLine('<span class="t-error">Uso: .macro run &lt;nome&gt;</span>'); return }
+    _appendLine(`<span class="t-aris">[macro] disparando ${escHtml(name)}</span>`)
+    try {
+      const r = await window.toolManager.execute('macro.run', { name }, { source: 'terminal' })
+      const okCount = r.results.filter(s => s.ok).length
+      const failCount = r.results.length - okCount
+      r.results.forEach(s => {
+        const label = s.ok
+          ? `<span class="t-dim">[tool] ${escHtml(s.tool)} — ok</span>`
+          : `<span class="t-error">[tool] ${escHtml(s.tool)} — erro: ${escHtml(s.error)}</span>`
+        _appendLine(label)
+      })
+      const summary = failCount === 0
+        ? `Macro ${name} concluída (${okCount} passo(s)).`
+        : `Macro ${name} finalizada com ${failCount} falha(s).`
+      _appendLine(`<span class="t-aris">${escHtml(summary)}</span>`)
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('ARIS-9', summary, failCount === 0 ? 'success' : 'warn')
+      }
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  if (sub === 'del' || sub === 'delete' || sub === 'rm') {
+    const name = args[1]
+    if (!name) { _appendLine('<span class="t-error">Uso: .macro del &lt;nome&gt;</span>'); return }
+    try {
+      const r = await window.toolManager.execute('macro.delete', { name }, { source: 'terminal' })
+      _appendLine(r.deleted
+        ? `<span class="t-dim">Macro removida: ${escHtml(name)}</span>`
+        : `<span class="t-warn">Macro não encontrada: ${escHtml(name)}</span>`)
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  if (sub === 'savelast' || sub === 'save-last') {
+    const name    = args[1]
+    const trigger = args.slice(2).join(' ')
+    if (!name || !trigger) { _appendLine('<span class="t-error">Uso: .macro savelast &lt;nome&gt; &lt;trigger&gt;</span>'); return }
+    try {
+      const r = await window.toolManager.execute('macro.saveLast', { name, trigger }, { source: 'terminal' })
+      _appendLine(`<span class="t-aris">Macro salva: ${escHtml(r.name)} — trigger: "${escHtml(r.trigger)}" (${r.steps} passo(s))</span>`)
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  _appendLine('<span class="t-error">Uso: .macro [list|show|run|del|savelast] ...</span>')
+}
+
