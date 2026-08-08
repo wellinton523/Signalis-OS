@@ -348,3 +348,26 @@ button:active { opacity: 0.7; }
 }
 
 body { animation: flicker 8s infinite; }
+
+
+.t-link{
+    color:#6ee7f9;
+    text-decoration:underline;
+    cursor:pointer;
+}
+
+.t-link:hover{
+    color:#8cefff;
+}
+
+.t-code{
+    color:#38bdf8;
+    background:rgba(56,189,248,.15);
+    padding:2px 4px;
+    border-radius:3px;
+    font-family:monospace;
+}
+
+.t-code-italic{
+    font-style:italic;
+}
