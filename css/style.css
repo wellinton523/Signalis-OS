@@ -371,3 +371,87 @@ body { animation: flicker 8s infinite; }
 .t-code-italic{
     font-style:italic;
 }
+
+/* ── TOAST NOTIFICATION SYSTEM ────────────────────────────── */
+#notification-container {
+  position: fixed;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+  width: max-content;
+  max-width: 90vw;
+}
+.os-toast {
+  background: var(--bg-panel);
+  border: 1px solid var(--blue-main);
+  box-shadow: 0 0 18px #4a9eff55, 0 4px 20px rgba(0,0,0,.4);
+  color: var(--blue-light);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 10px 16px 10px 20px;
+  min-width: 320px;
+  max-width: 480px;
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateY(-24px);
+  transition: opacity 0.28s ease, transform 0.28s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.os-toast::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--blue-main);
+}
+.os-toast.success::before { background: #8cffb2; }
+.os-toast.warn::before    { background: var(--yellow-warn); }
+.os-toast.error::before   { background: var(--red-alert); }
+.os-toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+.os-toast.hide {
+  opacity: 0;
+  transform: translateY(-24px);
+}
+.os-toast-title {
+  font-weight: bold;
+  color: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.os-toast-msg {
+  color: var(--blue-light);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.os-toast-close {
+  background: transparent;
+  border: 0;
+  color: var(--blue-light);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0.55;
+  padding: 0 2px;
+  line-height: 1;
+  transition: opacity 0.15s ease;
+}
+.os-toast-close:hover { opacity: 1; color: #fff; }
+.os-toast.success { border-color: #8cffb2; box-shadow: 0 0 18px #8cffb255, 0 4px 20px rgba(0,0,0,.4); }
+.os-toast.warn    { border-color: var(--yellow-warn); box-shadow: 0 0 18px #bf9c1a55, 0 4px 20px rgba(0,0,0,.4); }
+.os-toast.error   { border-color: var(--red-alert); box-shadow: 0 0 18px #bf202055, 0 4px 20px rgba(0,0,0,.4); }
