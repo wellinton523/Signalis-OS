@@ -39,7 +39,7 @@
 
   <!-- ── BARRA DE TÍTULO ──────────────────────────────────── -->
   <div id="titlebar">
-    <button id="mobile-menu-btn" data-testid="mobile-menu-btn" class="win-ctrl" aria-label="Abrir menu" title="Menu" onclick="window.toggleMobileDrawer && window.toggleMobileDrawer()">☰</button>
+    <button id="mobile-menu-btn" data-testid="mobile-menu-btn" class="win-ctrl" aria-label="Abrir menu" aria-controls="mobile-drawer" aria-expanded="false" title="Menu" onclick="window.toggleMobileDrawer && window.toggleMobileDrawer()">☰</button>
     <span id="titlebar-title">SIGNALIS-OS // ARIS-9 // BROWSER MODE</span>
     <div id="titlebar-controls">
       <button class="win-ctrl" onclick="api.minimize()" title="Minimizar">─</button>
@@ -50,7 +50,7 @@
 
   <!-- ── DRAWER MÓVEL ────────────────────────────────────── -->
   <div id="mobile-drawer-backdrop" data-testid="mobile-drawer-backdrop" onclick="window.closeMobileDrawer && window.closeMobileDrawer()"></div>
-  <aside id="mobile-drawer" data-testid="mobile-drawer" aria-label="Menu principal">
+  <aside id="mobile-drawer" data-testid="mobile-drawer" aria-label="Menu principal" role="dialog" aria-modal="true" tabindex="-1">
     <header class="drawer-header">
       <span>SIGNALIS-OS</span>
       <button class="win-ctrl" aria-label="Fechar menu" onclick="window.closeMobileDrawer && window.closeMobileDrawer()">✕</button>
@@ -197,17 +197,59 @@
       const backdrop = document.getElementById('mobile-drawer-backdrop')
       if (!drawer || !backdrop) return
 
+      const btn = document.getElementById('mobile-menu-btn')
+      const closeBtn = drawer.querySelector('.drawer-header .win-ctrl')
+      let _prevFocus = null
+
+      function _focusableInDrawer() {
+        return drawer.querySelectorAll('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])')
+      }
+
       function open() {
+        _prevFocus = document.activeElement
         drawer.classList.add('open')
         backdrop.classList.add('open')
         document.body.classList.add('drawer-open')
+        if (btn) btn.setAttribute('aria-expanded', 'true')
         _refreshDrawerState()
+        // Move o foco para o primeiro botão focável do drawer
+        const items = _focusableInDrawer()
+        const firstAction = drawer.querySelector('[data-testid="drawer-btn-terminal"]') || items[0]
+        if (firstAction) setTimeout(() => { try { firstAction.focus() } catch {} }, 60)
       }
+
       function close() {
+        // Se o foco está dentro do drawer, move para fora ANTES de esconder
+        if (drawer.contains(document.activeElement)) {
+          if (btn && typeof btn.focus === 'function') {
+            try { btn.focus() } catch {}
+          } else if (document.activeElement && document.activeElement.blur) {
+            document.activeElement.blur()
+          }
+        }
         drawer.classList.remove('open')
         backdrop.classList.remove('open')
         document.body.classList.remove('drawer-open')
+        if (btn) btn.setAttribute('aria-expanded', 'false')
+        // Fallback: restaura o foco anterior caso não seja o próprio drawer
+        if (_prevFocus && _prevFocus !== btn && !drawer.contains(_prevFocus) && typeof _prevFocus.focus === 'function') {
+          try { _prevFocus.focus() } catch {}
+        }
       }
+
+      // Focus trap: Tab e Shift+Tab ciclam entre os focáveis do drawer
+      drawer.addEventListener('keydown', e => {
+        if (e.key !== 'Tab') return
+        const focusable = Array.from(_focusableInDrawer())
+        if (focusable.length === 0) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault(); last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault(); first.focus()
+        }
+      })
       window.toggleMobileDrawer = () => {
         drawer.classList.contains('open') ? close() : open()
       }

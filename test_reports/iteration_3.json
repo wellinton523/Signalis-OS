@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend-only iteration 3 validation at 390x844 (mobile) on http://localhost:8000 after login as Nyx. All 5 accessibility assertions for the mobile drawer PASSED plus all 5 regression areas PASSED (10/10). Verified: aria-controls/aria-expanded on mobile-menu-btn, role=dialog + aria-modal=true + tabindex=-1 on mobile-drawer, aria-expanded toggling false->true on open, focus moved to drawer-btn-terminal ~200ms after open, ESC closes drawer and restores focus to mobile-menu-btn, header X close also restores focus, Tab/Shift+Tab focus trap keeps focus inside drawer (9 focusables, last=pref-sound, first=header .win-ctrl), terminal-input bottom (711px) above taskbar top (759px), all 13 data-testids present, toast-success with role=status, pref-sound uncheck persists across drawer close/reopen and getNotificationPrefs().sound === false, and local tools (browser.workspace.save/list/delete, macro.list) execute without errors.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Mobile 390x844 titlebar", "issues": ["#titlebar-title text 'SIGNALIS-OS // ARIS-9 // BROWSER MODE' is very low contrast (dark blue on dark navy) and is truncated behind the window controls — near unreadable on mobile"]},
+      {"screen": "Terminal window (mobile)", "issues": ["Intro/help lines ('Comandos diretos iniciam com...') render in a very dim teal with weak contrast against the near-black background; the help line is also clipped horizontally without wrapping"]}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_3.json"],
+  "action_items": [
+    "Optional polish only: raise contrast of #titlebar-title and terminal hint text; allow terminal hint line to wrap on narrow viewports."
+  ],
+  "critical_code_review_comments": [
+    "close() restores focus to _prevFocus when the drawer had been opened programmatically from a non-button element; if _prevFocus is an element inside a window that was meanwhile closed, focus() silently no-ops — acceptable, guarded by try/catch.",
+    "Focus trap only handles Tab keydown while the event target is inside the drawer; focus placed on body (e.g. after programmatic blur) would escape the trap. Not reproducible via normal UI flow, low priority.",
+    "First focusable in drawer is the header close button (class win-ctrl, no data-testid). Add data-testid=\"drawer-close-btn\" for robust future tests."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (frontend-only request)", "frontend": "100% (10/10 areas)"},
+  "seed_data_creation": "Created and deleted workspace 'TEST_ws1' via browser.workspace.save/delete; no residual test data (macro save intentionally rejected by validation).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Nyx / 84269713 (from /app/memory/test_credentials.md)",
+  "context_for_next_testing_agent": "Static app: start server with 'cd /app && nohup python3 server.py &' (port 8000) — it is NOT supervisor-managed and is often down. Login overlay: #auth-username/#auth-password/#auth-form button[type=submit]. All iteration-3 a11y items are fixed and verified; only cosmetic contrast items remain. macro.save requires steps:[{tool:'<valid tool name>',args:{}}]; browser.workspace.save requires urls:[...] (not tabs).",
+  "rca_of_the_issue": "N/A — previously reported a11y gaps (aria-expanded toggle, dialog role, focus on open, focus restore on close, tab trap) are now correctly implemented in the drawer IIFE in /app/index.html and confirmed live."
+}
