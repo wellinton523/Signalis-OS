@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 2 frontend-only validation of SIGNALIS-OS (vanilla JS, python server on :8000). Verified the previously reported MEDIUM mobile bug (terminal input clipped behind taskbar) is FIXED at 390x844, taskbar is position:fixed w/ max-height 116px + internal scroll, drawer now animates via visibility/opacity/transform (no display:none), drawer closes via X / ESC / backdrop, toast data-testids + role=status + auto-dismiss + close button work, desktop 1920x800 hides hamburger and drawer, and regression checks on _parseAction nested JSON + macro/workspace tools all pass. GAP: the claimed a11y focus-management, aria-expanded, role=dialog/aria-modal and all drawer data-testids were NOT present in /app/index.html (only CSS + notifications.js changes had landed). I added the missing data-testids (in scope); the a11y focus work is still missing and must be implemented by the main agent.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "mobile-drawer (index.html)", "issue": "Claimed focus management not implemented: opening the drawer does NOT move focus to the first focusable button (activeElement stayed on the hamburger); after closing via X, focus remains on the now-hidden close button inside the drawer (focus trapped in aria-hidden/invisible element) instead of returning to mobile-menu-btn. No _prevFocus logic exists in index.html.", "selector": "[data-testid=\"mobile-drawer\"]", "priority": "MEDIUM"},
+      {"component": "mobile-menu-btn", "issue": "aria-expanded attribute missing entirely (returns null before and after opening the drawer)", "selector": "[data-testid=\"mobile-menu-btn\"]", "priority": "MEDIUM"},
+      {"component": "mobile-drawer", "issue": "role=\"dialog\" and aria-modal=\"true\" missing (both null); no focus trap either", "selector": "[data-testid=\"mobile-drawer\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Mobile 390x844 terminal", "issues": ["Layout fix confirmed: input bottom=711px, taskbar top=759px (48px clearance, no overlap). Small extra dead space because taskbar only renders 85px tall while window reserves 116px - acceptable but could use dynamic offset (e.g. CSS var / ResizeObserver) instead of a hardcoded 116px."]},
+      {"screen": "Toasts", "issues": ["Toast container class names include 'error' which makes generic error-selector scraping noisy in tests (cosmetic only)."]}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_2.json"],
+  "action_items": [
+    "Implement the drawer a11y work that was claimed but missing in /app/index.html: store _prevFocus, focus [data-testid=drawer-btn-terminal] on open, restore focus to mobile-menu-btn on close (X / ESC / backdrop), and toggle aria-expanded on #mobile-menu-btn.",
+    "Add role=\"dialog\" aria-modal=\"true\" (and ideally a focus trap / aria-hidden on background) to #mobile-drawer."
+  ],
+  "critical_code_review_comments": [
+    "index.html drawer IIFE open()/close() have no focus or aria state handling - blur the active element or move focus before hiding the drawer, otherwise keyboard/screen-reader focus stays inside a visibility:hidden subtree.",
+    "Mobile window offset bottom:116px is hardcoded and duplicated with #taskbar max-height:116px; extract to a CSS custom property (--taskbar-h) to keep them in sync.",
+    "index.html is ~300 lines with a large inline <script>; consider moving the drawer logic to js/drawer.js for testability."
+  ],
+  "updated_files": ["/app/index.html"],
+  "success_rate": {"backend": "not tested (frontend-only request)", "frontend": "9/10 feature areas passed (90%) - only a11y focus/aria assertions failed"},
+  "seed_data_creation": "Created transient macro 'test_m1' and workspace 'test_ws' via toolManager for regression checks; both were gone after reload (in-memory/per-session storage), verified lists are empty.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Nyx / 84269713 (from /app/memory/test_credentials.md); server started with `cd /app && python3 server.py &`",
+  "context_for_next_testing_agent": "Server must be started manually (python3 server.py, port 8000). All drawer/pref data-testids now exist in index.html (added by T1). Mobile layout bug from iteration 1 is fixed and verified. Remaining open items are a11y-only: focus management, aria-expanded, role=dialog/aria-modal on #mobile-drawer. macro/workspace tools are in-memory per session (do not persist across reload) - note if persistence is a requirement. Ollama unavailable, so LLM chat flows were not tested.",
+  "rca_of_the_issue": "The CSS (bottom:116px on .os-window, position:fixed taskbar with max-height 116px + overflow-y:auto) and notifications.js (data-testid/role=status) edits landed correctly, which fixed the MEDIUM clip bug. However the index.html edits described in the request (data-testids, aria-expanded, focus management, dialog roles) were never written to disk - grep found no _prevFocus/aria-expanded/drawer testids. T1 restored the data-testids only; behavioral a11y code is still absent."
+}

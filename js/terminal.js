@@ -24,6 +24,12 @@ if (typeof window !== 'undefined') {
     const message = detail ? ` — ${_parseMarkdown(escHtml(detail))}` : ''
     _appendLine(`<span class="t-dim">[agent] ${escHtml(label)}${message}</span>`)
   }
+  // Renderiza comentários curtos que o modelo escreve ANTES de uma ACTION,
+  // para não perdermos prosa útil ("vou abrir X pra você").
+  window.__onAgentPreText = (text) => {
+    if (!_termOutput || !text) return
+    _appendLine(`<span class="t-aris">${_parseMarkdown(escHtml(text))}</span>`)
+  }
 }
 
 function openTerminal() {

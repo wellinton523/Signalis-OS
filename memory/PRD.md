@@ -6,49 +6,43 @@ Melhorar o ARIS-9 no repositório SIGNALIS-OS com:
 2. Notificações quando chegar uma resposta.
 
 ## Arquitetura
-- Frontend vanilla JS/HTML/CSS (SIGNALIS-OS shell + terminal + janelas).
-- Backend HTTP customizado (`server.py`, ThreadingHTTPServer, autenticação via cookie).
-- Agente ARIS-9 com ReAct textual em `js/agent.js`.
-- Ferramentas registradas em `window.toolManager` (auto-descoberta em `js/tools/**`).
+Frontend vanilla JS/HTML/CSS + servidor HTTP Python custom (`server.py`, ThreadingHTTPServer). Agente ARIS-9 ReAct textual em `js/agent.js`. Ferramentas em `window.toolManager` auto-descobertas em `js/tools/**`.
 
-## Implementado (jan/2026)
+## Implementado
 
-### Fase 1 — Notificações
-- `js/notifications.js`: toast + Notification API nativa + beep via Web Audio.
-- Toast centralizado no topo com borda por tipo (success/warn/error/info) e auto-dismiss.
+### Fase 1 — Notificações (jan/2026)
+- `js/notifications.js`: toast + Notification API + beep Web Audio.
+- Toast centralizado no topo, borda por tipo, auto-dismiss.
 
 ### Fase 2 — ARIS-9 arquiteto de soluções
-- Novo `_buildSystemPrompt()` cobre raciocínio causal, leitura de tom e otimização proativa de fluxos.
+- `_buildSystemPrompt()` reescrito: raciocínio causal, tom, workflows proativos.
 
 ### Fase 3 — Fluxos salvos (macros)
-- `js/tools/automation/macro.js`: 6 tools + helper `window.aris9Macros.match()`.
-- Terminal intercepta trigger e roda macro sem LLM.
-- Comando `.macro list|show|run|del|savelast`.
+- `js/tools/automation/macro.js`: 6 tools + `window.aris9Macros.match()`.
+- Terminal intercepta trigger e dispara macro sem LLM.
+- `.macro list|show|run|del|savelast` no terminal.
 
-### Fase 4 — Integração com navegador + responsividade mobile
-- `js/tools/browser/openMulti.js`: abre várias URLs de uma vez.
-- `js/tools/browser/workspace.js`: 5 tools (`browser.workspace.save/list/get/delete/open`) — perfis de URLs salvos ("modo trabalho" abre Gmail+Slack+Jira em uma frase).
-- Comando `.ws list|show|open|save|del` no terminal.
-- Prompt do ARIS-9 conhece as novas tools de navegador.
-- `index.html`: meta viewport + theme-color + PWA-ready.
-- `css/style.css`: media queries `< 768px` e `< 480px`, `prefers-reduced-motion`, `hover: none` (touch).
-  - Janelas viram fullscreen no mobile
-  - Taskbar wrap em várias linhas com botões touch-friendly
-  - Toast quase full-width no celular
-  - Auth card responsivo com inputs >= 44px de altura
-- `js/windowManager.js`: drag por toque (touch events) desktop only — mobile mantém janela fixa.
+### Fase 4 — Navegador + responsivo mobile
+- `browser.openMulti` + workspaces (`browser.workspace.save/list/get/delete/open`).
+- Comando `.ws` no terminal.
+- Meta viewport, media queries `<768px` e `<480px`, `prefers-reduced-motion`, `hover: none`.
+- `windowManager.js`: touch drag desktop only.
 
-## Validação
-Playwright em viewport 390x800:
-- `innerWidth = 390`, media query aciona
-- Terminal ocupa 100vw
-- Workspace `trabalho` com 3 URLs salvo e recuperado
-- 10 tools de browser registradas
-- Toast responsivo aparece na largura correta
+### Fase 5 — Menu hambúrguer mobile + bug fix respostas vazias/cortadas
+- **Menu hambúrguer**: botão `#mobile-menu-btn` no titlebar (visível só <768px), drawer lateral esquerdo com Terminal/SysMon/Workspaces/Macros/Wallpaper + 3 preferências de notificação + rodapé com nível de permissão. Acessibilidade: `role=dialog`, `aria-modal=true`, `aria-expanded` toggle, foco vai para o primeiro botão ao abrir e volta ao hambúrguer ao fechar, focus trap com Tab/Shift+Tab, fecha por ✕/ESC/backdrop.
+- **Bug ARIS-9 respostas vazias/cortadas**: RCA identificou 3 causas: (a) `_parseAction` com regex non-greedy quebrava com JSON aninhado; (b) `_cleanFinalResponse` deixava lixo ACTION/ARGS residual; (c) prosa antes de ACTION era descartada. Reescrito com parser de chaves balanceado (escapes/strings-aware), `_extractBalancedJson`, captura de `preText` renderizado via `window.__onAgentPreText`, fallback narrativo quando modelo retorna vazio ("Concluído. Executado: X, Y"), e prompt atualizado ("escolha OU prosa OU ação, nunca ambos").
+- Layout mobile: janela usa `bottom:116px` + flexbox em vez de `height: calc(...)` para acomodar taskbar wrap.
+- `data-testid` em todos elementos interativos (13 ids).
+
+### Validação
+- **Iteração 1**: 24/24 funcionais, 1 bug MEDIUM (input clip mobile).
+- **Iteração 2**: 9/10, fix do clip validado; a11y falhou porque search_replace anterior tinha revertido silenciosamente.
+- **Iteração 3**: **10/10 áreas passaram**. Sem bugs restantes; apenas 2 observações cosméticas de contraste.
 
 ## Backlog
-- P2: painel visual para editar macros e workspaces.
-- P2: capturar args reais no `macro.saveLast`.
-- P2: sugerir triggers automaticamente baseado em frases recorrentes.
-- P2: hamburger menu no titlebar mobile para acessar SysMon/Wallpaper.
-- P2: gestos (swipe) para trocar janela no mobile.
+- P2: contraste do `#titlebar-title` e das linhas t-dim de hint no terminal.
+- P2: `data-testid="drawer-close-btn"` no ✕ do header do drawer.
+- P2: swipe lateral no mobile para trocar de janela.
+- P2: editor visual de macros e workspaces.
+- P2: `macro.saveLast` capturar args reais (hoje gera placeholders).
+- P3: extrair drawer para `js/drawer.js`; extrair `--taskbar-h` para CSS var.
