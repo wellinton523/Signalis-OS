@@ -337,8 +337,16 @@ class Handler(BaseHTTPRequestHandler):
         if len(text_in) > 4096:
             text_in = text_in[:4090] + "..."
 
+        VALID_VOICES = {"nova", "shimmer", "alloy", "coral", "sage", "onyx", "fable", "echo", "ash"}
+        VALID_MODELS = {"tts-1", "tts-1-hd", "gpt-4o-mini-tts"}
         voice = str(body.get("voice", "nova"))
         model = str(body.get("model", "tts-1-hd"))
+        if voice not in VALID_VOICES:
+            self._send_error(400, f"Voz inválida '{voice}'. Válidas: {', '.join(sorted(VALID_VOICES))}.")
+            return
+        if model not in VALID_MODELS:
+            self._send_error(400, f"Modelo inválido '{model}'. Válidos: {', '.join(sorted(VALID_MODELS))}.")
+            return
         try:
             speed = float(body.get("speed", 1.0))
         except (TypeError, ValueError):
@@ -1143,8 +1151,9 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _send_error(self, status, message):
-        self._send_response(status, message.encode("utf-8"), {
-            "Content-Type":  "text/plain; charset=utf-8",
+        payload = json.dumps({"error": str(message), "status": status}).encode("utf-8")
+        self._send_response(status, payload, {
+            "Content-Type": "application/json; charset=utf-8",
             "Access-Control-Allow-Origin": "*",
         })
 

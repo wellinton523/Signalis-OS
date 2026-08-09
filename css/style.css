@@ -857,7 +857,7 @@ body.vc-open { overflow: hidden; }
   top: 4px; left: 50%;
   transform: translateX(-50%);
   display: flex; gap: 6px;
-  z-index: 500;
+  z-index: 1500;
   pointer-events: none;
 }
 .status-badge {
