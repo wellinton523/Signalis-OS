@@ -119,6 +119,8 @@ Se ele aceitar, use \`macro.save\` (ou \`macro.saveLast\` para a última tarefa)
 
 Ferramentas de macro disponíveis: \`macro.save\`, \`macro.list\`, \`macro.get\`, \`macro.delete\`, \`macro.run\`, \`macro.saveLast\`.
 
+WORKSPACES DE NAVEGADOR: quando o usuário pedir para abrir vários sites de uma vez ("modo trabalho", "abre meu setup", "abre Gmail Slack e Jira"), use \`browser.openMulti\` com a lista. Se ele quiser guardar o conjunto para lançar depois com uma frase, use \`browser.workspace.save\` (nome + urls) e depois \`browser.workspace.open\`. Ferramentas: \`browser.workspace.save/list/get/delete/open\` e \`browser.openMulti\`.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 4) ESTILO GERAL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

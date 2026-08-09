@@ -34,31 +34,55 @@ function _setupDrag(win) {
   const titlebar = win.querySelector('[data-drag]')
   if (!titlebar) return
 
+  // No mobile as janelas são fullscreen — desabilita drag para não conflitar com scroll.
+  const isMobile = () => window.matchMedia('(max-width: 768px)').matches
+
   let dragging = false
   let offsetX = 0, offsetY = 0
 
-  titlebar.addEventListener('mousedown', e => {
-    // Não arrasta se clicou em um botão
-    if (e.target.tagName === 'BUTTON') return
+  function _start(clientX, clientY, target) {
+    if (isMobile()) return
+    if (target && target.tagName === 'BUTTON') return
     dragging = true
-    offsetX = e.clientX - win.offsetLeft
-    offsetY = e.clientY - win.offsetTop
-  })
+    offsetX = clientX - win.offsetLeft
+    offsetY = clientY - win.offsetTop
+  }
 
-  document.addEventListener('mousemove', e => {
+  function _move(clientX, clientY) {
     if (!dragging) return
-    let x = e.clientX - offsetX
-    let y = e.clientY - offsetY
-    // Mantém a janela dentro da tela
+    let x = clientX - offsetX
+    let y = clientY - offsetY
     const maxX = window.innerWidth  - win.offsetWidth
     const maxY = window.innerHeight - win.offsetHeight
     x = Math.max(0, Math.min(x, maxX))
-    y = Math.max(28, Math.min(y, maxY - 36))  // 28 = titlebar, 36 = taskbar
+    y = Math.max(28, Math.min(y, maxY - 36))
     win.style.left = x + 'px'
     win.style.top  = y + 'px'
-  })
+  }
 
-  document.addEventListener('mouseup', () => { dragging = false })
+  function _end() { dragging = false }
+
+  // Mouse
+  titlebar.addEventListener('mousedown', e => _start(e.clientX, e.clientY, e.target))
+  document.addEventListener('mousemove', e => _move(e.clientX, e.clientY))
+  document.addEventListener('mouseup', _end)
+
+  // Touch
+  titlebar.addEventListener('touchstart', e => {
+    if (isMobile()) return
+    const t = e.touches[0]
+    if (!t) return
+    _start(t.clientX, t.clientY, e.target)
+  }, { passive: true })
+  document.addEventListener('touchmove', e => {
+    if (!dragging) return
+    const t = e.touches[0]
+    if (!t) return
+    e.preventDefault()
+    _move(t.clientX, t.clientY)
+  }, { passive: false })
+  document.addEventListener('touchend', _end)
+  document.addEventListener('touchcancel', _end)
 }
 
 

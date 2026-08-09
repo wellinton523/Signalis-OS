@@ -192,6 +192,8 @@ async function _runDirect(cmdRaw) {
     case 'tools':    _cmdTools(args);           break
     case 'clip':     await _cmdClip(args);      break
     case 'macro':    await _cmdMacro(args);    break
+    case 'ws':
+    case 'workspace': await _cmdWorkspace(args); break
     case 'reset':
       agentReset()
       _appendLine('<span class="t-dim">Memória de sessão do ARIS-9 limpa.</span>')
@@ -239,6 +241,12 @@ function _cmdHelp() {
     '  .macro run &lt;nome&gt;                executa a macro imediatamente',
     '  .macro del &lt;nome&gt;                remove uma macro',
     '  .macro savelast &lt;nome&gt; &lt;trigger&gt; salva a última tarefa como macro',
+    '<span class="t-dim">── WORKSPACES DE NAVEGADOR ─────────────────────</span>',
+    '  .ws list                         lista workspaces salvos',
+    '  .ws show &lt;nome&gt;                  mostra URLs de um workspace',
+    '  .ws open &lt;nome&gt;                  abre todas as URLs do workspace',
+    '  .ws save &lt;nome&gt; &lt;url1&gt; &lt;url2&gt;... salva um workspace',
+    '  .ws del &lt;nome&gt;                   remove um workspace',
     '<span class="t-dim">── OUTROS ──────────────────────────────────────</span>',
     '  .reset                           limpa memória de sessão do ARIS-9',
   ]
@@ -1071,5 +1079,90 @@ async function _cmdMacro(args) {
   }
 
   _appendLine('<span class="t-error">Uso: .macro [list|show|run|del|savelast] ...</span>')
+}
+
+// ── .ws — workspaces de navegador ──────────────────────────────
+async function _cmdWorkspace(args) {
+  const sub = (args[0] || '').toLowerCase()
+
+  if (!sub || sub === 'list' || sub === 'ls') {
+    let list
+    try { list = await window.toolManager.execute('browser.workspace.list', {}, { source: 'terminal' }) }
+    catch (err) { _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`); return }
+    if (!list.length) {
+      _appendLine('<span class="t-dim">Nenhum workspace salvo. Use .ws save &lt;nome&gt; &lt;url1&gt; &lt;url2&gt;...</span>')
+      return
+    }
+    _appendLine('<span class="t-dim">── WORKSPACES DE NAVEGADOR ────────────────────</span>')
+    list.forEach(w => {
+      _appendLine(`  <span class="t-aris">${escHtml(w.name)}</span> — ${escHtml(w.description || 'sem descrição')} <span class="t-dim">(${w.urls} URL(s), ${w.opens} aberturas)</span>`)
+    })
+    return
+  }
+
+  if (sub === 'show' || sub === 'get') {
+    const name = args[1]
+    if (!name) { _appendLine('<span class="t-error">Uso: .ws show &lt;nome&gt;</span>'); return }
+    let r
+    try { r = await window.toolManager.execute('browser.workspace.get', { name }, { source: 'terminal' }) }
+    catch (err) { _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`); return }
+    if (!r.found) { _appendLine(`<span class="t-warn">Workspace não encontrado: ${escHtml(name)}</span>`); return }
+    _appendLine(`<span class="t-aris">${escHtml(r.name)}</span> — ${escHtml(r.description || 'sem descrição')} <span class="t-dim">(aberto ${r.opens || 0}x)</span>`)
+    r.urls.forEach((u, i) => {
+      _appendLine(`    <span class="t-dim">${i + 1}.</span> <a href="#" onclick="api.open('${u.replace(/'/g, "\\'")}');return false;" class="t-link">${escHtml(u)}</a>`)
+    })
+    return
+  }
+
+  if (sub === 'open' || sub === 'run') {
+    const name = args[1]
+    if (!name) { _appendLine('<span class="t-error">Uso: .ws open &lt;nome&gt;</span>'); return }
+    _appendLine(`<span class="t-aris">[workspace] abrindo ${escHtml(name)}</span>`)
+    try {
+      const r = await window.toolManager.execute('browser.workspace.open', { name }, { source: 'terminal' })
+      _appendLine(`<span class="t-aris">Abertas ${r.opened} URL(s).</span>`)
+      if (r.failed?.length) {
+        r.failed.forEach(f => _appendLine(`<span class="t-warn">Falhou: ${escHtml(f.url)} — ${escHtml(f.reason)}</span>`))
+      }
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('ARIS-9', `Workspace ${name} aberto (${r.opened} URLs).`, 'success')
+      }
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  if (sub === 'save') {
+    const name = args[1]
+    const urls = args.slice(2).filter(u => /^https?:\/\//i.test(u))
+    if (!name || !urls.length) {
+      _appendLine('<span class="t-error">Uso: .ws save &lt;nome&gt; &lt;url1&gt; &lt;url2&gt; ...</span>')
+      return
+    }
+    try {
+      const r = await window.toolManager.execute('browser.workspace.save', { name, urls }, { source: 'terminal' })
+      _appendLine(`<span class="t-aris">Workspace salvo: ${escHtml(r.name)} (${r.urls} URL(s))</span>`)
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  if (sub === 'del' || sub === 'delete' || sub === 'rm') {
+    const name = args[1]
+    if (!name) { _appendLine('<span class="t-error">Uso: .ws del &lt;nome&gt;</span>'); return }
+    try {
+      const r = await window.toolManager.execute('browser.workspace.delete', { name }, { source: 'terminal' })
+      _appendLine(r.deleted
+        ? `<span class="t-dim">Workspace removido: ${escHtml(name)}</span>`
+        : `<span class="t-warn">Workspace não encontrado: ${escHtml(name)}</span>`)
+    } catch (err) {
+      _appendLine(`<span class="t-error">${escHtml(err.message)}</span>`)
+    }
+    return
+  }
+
+  _appendLine('<span class="t-error">Uso: .ws [list|show|open|save|del] ...</span>')
 }
 
