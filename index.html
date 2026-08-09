@@ -39,7 +39,7 @@
 
   <!-- ── BARRA DE TÍTULO ──────────────────────────────────── -->
   <div id="titlebar">
-    <button id="mobile-menu-btn" class="win-ctrl" aria-label="Abrir menu" title="Menu" onclick="window.toggleMobileDrawer && window.toggleMobileDrawer()">☰</button>
+    <button id="mobile-menu-btn" data-testid="mobile-menu-btn" class="win-ctrl" aria-label="Abrir menu" title="Menu" onclick="window.toggleMobileDrawer && window.toggleMobileDrawer()">☰</button>
     <span id="titlebar-title">SIGNALIS-OS // ARIS-9 // BROWSER MODE</span>
     <div id="titlebar-controls">
       <button class="win-ctrl" onclick="api.minimize()" title="Minimizar">─</button>
@@ -49,24 +49,24 @@
   </div>
 
   <!-- ── DRAWER MÓVEL ────────────────────────────────────── -->
-  <div id="mobile-drawer-backdrop" onclick="window.closeMobileDrawer && window.closeMobileDrawer()"></div>
-  <aside id="mobile-drawer" aria-label="Menu principal">
+  <div id="mobile-drawer-backdrop" data-testid="mobile-drawer-backdrop" onclick="window.closeMobileDrawer && window.closeMobileDrawer()"></div>
+  <aside id="mobile-drawer" data-testid="mobile-drawer" aria-label="Menu principal">
     <header class="drawer-header">
       <span>SIGNALIS-OS</span>
       <button class="win-ctrl" aria-label="Fechar menu" onclick="window.closeMobileDrawer && window.closeMobileDrawer()">✕</button>
     </header>
     <nav class="drawer-nav">
-      <button class="drawer-btn" data-drawer-action="terminal">[ TERMINAL ]</button>
-      <button class="drawer-btn" data-drawer-action="sysmon">[ MONITOR DE SISTEMA ]</button>
-      <button class="drawer-btn" data-drawer-action="workspaces">[ WORKSPACES ]</button>
-      <button class="drawer-btn" data-drawer-action="macros">[ MACROS ]</button>
-      <button class="drawer-btn" data-drawer-action="wallpaper">[ WALLPAPER ON/OFF ]</button>
+      <button class="drawer-btn" data-drawer-action="terminal" data-testid="drawer-btn-terminal">[ TERMINAL ]</button>
+      <button class="drawer-btn" data-drawer-action="sysmon" data-testid="drawer-btn-sysmon">[ MONITOR DE SISTEMA ]</button>
+      <button class="drawer-btn" data-drawer-action="workspaces" data-testid="drawer-btn-workspaces">[ WORKSPACES ]</button>
+      <button class="drawer-btn" data-drawer-action="macros" data-testid="drawer-btn-macros">[ MACROS ]</button>
+      <button class="drawer-btn" data-drawer-action="wallpaper" data-testid="drawer-btn-wallpaper">[ WALLPAPER ON/OFF ]</button>
     </nav>
     <section class="drawer-section">
       <h3>PREFERÊNCIAS</h3>
-      <label class="drawer-toggle"><input type="checkbox" data-pref="inApp"  checked> Toast in-app</label>
-      <label class="drawer-toggle"><input type="checkbox" data-pref="native" checked> Notificação do sistema</label>
-      <label class="drawer-toggle"><input type="checkbox" data-pref="sound"  checked> Som ao receber resposta</label>
+      <label class="drawer-toggle"><input type="checkbox" data-pref="inApp" data-testid="pref-inApp"  checked> Toast in-app</label>
+      <label class="drawer-toggle"><input type="checkbox" data-pref="native" data-testid="pref-native" checked> Notificação do sistema</label>
+      <label class="drawer-toggle"><input type="checkbox" data-pref="sound" data-testid="pref-sound"  checked> Som ao receber resposta</label>
     </section>
     <footer class="drawer-footer">
       <span id="drawer-perm">nível: —</span>
@@ -98,10 +98,10 @@
         <button class="win-ctrl close" data-action="close">✕</button>
       </div>
       <div class="os-window-body">
-        <div class="terminal-output" id="terminal-output"></div>
+        <div class="terminal-output" id="terminal-output" data-testid="terminal-output"></div>
         <div class="terminal-input-row">
           <span class="terminal-prefix" id="terminal-prefix">ARIS@OS ~$</span>
-          <input type="text" id="terminal-input" autocomplete="off" spellcheck="false"
+          <input type="text" id="terminal-input" data-testid="terminal-input" autocomplete="off" spellcheck="false"
                  placeholder="comando ou mensagem para o ARIS-9...">
         </div>
       </div>

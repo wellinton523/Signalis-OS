@@ -129,6 +129,8 @@
 
     const toast = document.createElement('div')
     toast.className = `os-toast ${type || ''}`.trim()
+    toast.setAttribute('data-testid', `toast-${type || 'info'}`)
+    toast.setAttribute('role', 'status')
 
     const titleEl = document.createElement('div')
     titleEl.className = 'os-toast-title'
