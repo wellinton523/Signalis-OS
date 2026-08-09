@@ -58,7 +58,9 @@ Para executar uma ação no sistema, use este formato exato (duas linhas, sem te
 ACTION: nome_da_ferramenta
 ARGS: {"param": "valor"}
 
-Após receber OBSERVATION com o resultado, escreva a resposta final normalmente sem ACTION.
+REGRA IMPORTANTE: em um mesmo turno, escolha UMA das duas coisas — ou escreva uma resposta em prosa para o usuário, OU emita ACTION/ARGS. Nunca as duas. Se precisar de prosa curta ANTES da ação (ex: "tudo bem, vou abrir"), coloque UMA linha e depois ACTION na linha seguinte — nada mais.
+
+Após receber OBSERVATION com o resultado, escreva a resposta final normalmente sem ACTION — descreva ao usuário, em português e com pelo menos uma frase completa, o que aconteceu.
 
 Ferramentas disponíveis por categoria:
 ${catalog}
@@ -243,14 +245,21 @@ async function _reactLoop() {
       // Se veio vazio, tenta novamente pedindo ao modelo para responder
       if (!finalText.trim()) {
         _emitAgentStage('responder', 'resposta vazia — solicitando novamente')
-        _history.push({ role: 'user', content: 'Por favor, responda a solicitação do usuário em português.' })
+        const nudge = executedTools.length > 0
+          ? 'Descreva ao usuário, em português e em uma ou duas frases, o resultado final da operação executada.'
+          : 'Responda a solicitação do usuário em português, com pelo menos uma frase completa.'
+        _history.push({ role: 'user', content: nudge })
         const retry = await _callModel(_history)
         finalText = _cleanFinalResponse(retry).trim()
         _history.pop() // remove a mensagem de retry do histórico público
       }
 
-      // Último fallback
-      if (!finalText.trim()) finalText = '*Processamento concluído.*'
+      // Último fallback — narra o que foi feito em vez de retornar vazio
+      if (!finalText.trim()) {
+        finalText = executedTools.length > 0
+          ? `*Concluído.* Executado: ${executedTools.map(t => t.tool).join(', ')}.`
+          : '*Processamento concluído.*'
+      }
 
       _history.push({ role: 'assistant', content: finalText })
       if (executedTools.length > 0) _saveTaskToHistory(executedTools, finalText)
@@ -258,8 +267,17 @@ async function _reactLoop() {
     }
 
     // ── Executa a tool ───────────────────────────────────────
-    const { toolName, args } = action
+    const { toolName, args, preText } = action
     _emitAgentStage('executor', `tool [${step + 1}/${MAX_STEPS}]: ${toolName}`)
+
+    // Se o modelo escreveu prosa ANTES do ACTION, mostra ao usuário para não
+    // perdermos comentários úteis ("vou abrir X pra você", "isso pode demorar").
+    if (preText && preText.length > 3) {
+      const cleaned = _cleanFinalResponse(preText).trim()
+      if (cleaned && typeof window.__onAgentPreText === 'function') {
+        try { window.__onAgentPreText(cleaned) } catch { /* ignora */ }
+      }
+    }
 
     // Adiciona a resposta do modelo (com o ACTION) no histórico como assistant
     _history.push({ role: 'assistant', content: raw })
@@ -306,29 +324,66 @@ async function _reactLoop() {
 // ── Parser do bloco ACTION/ARGS ──────────────────────────────
 // Detecta qualquer variação que o modelo possa gerar:
 //   ACTION: nome\nARGS: {...}
-//   ACTION: nome\nARGS: {...}  (com espaços extras)
+//   ACTION: nome\nARGS: {...}  (com espaços extras, JSON com objetos aninhados)
+// Retorna também `preText` (texto antes do ACTION) para não perder prosa do modelo.
 function _parseAction(text) {
   if (!text || typeof text !== 'string') return null
 
-  // Regex principal: ACTION: <nome>\nARGS: <json>
-  const match = text.match(/ACTION:\s*([a-zA-Z0-9_.]+)\s*\nARGS:\s*(\{[\s\S]*?\})(?:\n|$)/i)
-  if (match) {
-    const toolName = match[1].trim()
-    try {
-      const args = JSON.parse(match[2])
-      return { toolName, args }
-    } catch {
-      // JSON malformado — tenta extrair mesmo assim
-      return { toolName, args: _tryParseLooseJson(match[2]) }
+  const idx = text.search(/ACTION:\s*[a-zA-Z0-9_.]+/i)
+  if (idx === -1) return null
+
+  const preText = text.slice(0, idx).trim()
+  const rest = text.slice(idx)
+
+  const nameMatch = rest.match(/^ACTION:\s*([a-zA-Z0-9_.]+)/i)
+  if (!nameMatch) return null
+  const toolName = nameMatch[1].trim()
+
+  // Localiza o "ARGS:" após o nome
+  const argsIdx = rest.search(/ARGS:\s*/i)
+  if (argsIdx === -1) {
+    // Sem ARGS → tool sem parâmetros
+    return { toolName, args: {}, preText }
+  }
+
+  const afterArgs = rest.slice(argsIdx).replace(/^ARGS:\s*/i, '')
+  const jsonStart = afterArgs.indexOf('{')
+  if (jsonStart === -1) {
+    return { toolName, args: {}, preText }
+  }
+
+  // Extrai bloco JSON balanceado, respeitando strings e escapes
+  const jsonStr = _extractBalancedJson(afterArgs, jsonStart)
+  if (!jsonStr) return { toolName, args: {}, preText }
+
+  try {
+    return { toolName, args: JSON.parse(jsonStr), preText }
+  } catch {
+    return { toolName, args: _tryParseLooseJson(jsonStr), preText }
+  }
+}
+
+// Extrai o primeiro objeto {...} balanceado a partir de startIdx.
+// Ignora chaves dentro de strings (com suporte a escape).
+function _extractBalancedJson(str, startIdx) {
+  let depth = 0
+  let inStr = false
+  let esc = false
+  for (let i = startIdx; i < str.length; i++) {
+    const c = str[i]
+    if (inStr) {
+      if (esc) { esc = false; continue }
+      if (c === '\\') { esc = true; continue }
+      if (c === '"') inStr = false
+      continue
+    }
+    if (c === '"') { inStr = true; continue }
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) return str.slice(startIdx, i + 1)
     }
   }
-
-  // Fallback: ACTION sem ARGS (ferramenta sem parâmetros)
-  const noArgs = text.match(/ACTION:\s*([a-zA-Z0-9_.]+)\s*(?:\nARGS:\s*\{\s*\})?(?:\n|$)/i)
-  if (noArgs) {
-    return { toolName: noArgs[1].trim(), args: {} }
-  }
-
   return null
 }
 
@@ -359,16 +414,38 @@ function _formatObservation(result) {
 }
 
 // ── Limpa a resposta final (remove blocos ACTION/ARGS residuais) ──
+// Usa o mesmo parser balanceado do _parseAction para lidar com JSON aninhado
+// e não deixar "lixo" na resposta ao usuário quando o modelo repete a sintaxe.
 function _cleanFinalResponse(text) {
   if (!text) return ''
-  return text
-    // Remove blocos ACTION+ARGS completos
-    .replace(/^ACTION:\s*\S.*\n?^ARGS:\s*\{[^}]*\}\s*$/gim, '')
-    // Remove linha ACTION isolada (sem ARGS) apenas se for a linha inteira
-    .replace(/^ACTION:\s*[a-zA-Z0-9_.]+\s*$/gm, '')
-    // Remove linha ARGS isolada
-    .replace(/^ARGS:\s*\{.*\}\s*$/gm, '')
-    .trim()
+  let out = String(text)
+
+  // Remove todos os blocos "ACTION: nome\nARGS: {...}" respeitando chaves aninhadas
+  while (true) {
+    const m = out.match(/ACTION:\s*[a-zA-Z0-9_.]+/i)
+    if (!m) break
+    const start = m.index
+    const argsMatch = out.slice(start).match(/ARGS:\s*/i)
+    if (!argsMatch) {
+      // Só remove a linha ACTION solta
+      out = out.slice(0, start) + out.slice(start).replace(/^ACTION:\s*[a-zA-Z0-9_.]+\s*/i, '')
+      continue
+    }
+    const argsStart = start + argsMatch.index + argsMatch[0].length
+    const braceIdx = out.indexOf('{', argsStart)
+    if (braceIdx === -1) {
+      out = out.slice(0, start) + out.slice(argsStart)
+      continue
+    }
+    const json = _extractBalancedJson(out, braceIdx)
+    const end = json ? braceIdx + json.length : argsStart
+    out = out.slice(0, start) + out.slice(end)
+  }
+
+  // Remove qualquer OBSERVATION: ... que tenha vazado
+  out = out.replace(/^OBSERVATION:.*$/gim, '')
+
+  return out.trim()
 }
 
 // ── Chamada simples ao modelo (sem tool_calls) ───────────────

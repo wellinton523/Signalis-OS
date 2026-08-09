@@ -39,6 +39,7 @@
 
   <!-- ── BARRA DE TÍTULO ──────────────────────────────────── -->
   <div id="titlebar">
+    <button id="mobile-menu-btn" class="win-ctrl" aria-label="Abrir menu" title="Menu" onclick="window.toggleMobileDrawer && window.toggleMobileDrawer()">☰</button>
     <span id="titlebar-title">SIGNALIS-OS // ARIS-9 // BROWSER MODE</span>
     <div id="titlebar-controls">
       <button class="win-ctrl" onclick="api.minimize()" title="Minimizar">─</button>
@@ -46,6 +47,31 @@
       <button class="win-ctrl close" onclick="api.close()" title="Fechar">✕</button>
     </div>
   </div>
+
+  <!-- ── DRAWER MÓVEL ────────────────────────────────────── -->
+  <div id="mobile-drawer-backdrop" onclick="window.closeMobileDrawer && window.closeMobileDrawer()"></div>
+  <aside id="mobile-drawer" aria-label="Menu principal">
+    <header class="drawer-header">
+      <span>SIGNALIS-OS</span>
+      <button class="win-ctrl" aria-label="Fechar menu" onclick="window.closeMobileDrawer && window.closeMobileDrawer()">✕</button>
+    </header>
+    <nav class="drawer-nav">
+      <button class="drawer-btn" data-drawer-action="terminal">[ TERMINAL ]</button>
+      <button class="drawer-btn" data-drawer-action="sysmon">[ MONITOR DE SISTEMA ]</button>
+      <button class="drawer-btn" data-drawer-action="workspaces">[ WORKSPACES ]</button>
+      <button class="drawer-btn" data-drawer-action="macros">[ MACROS ]</button>
+      <button class="drawer-btn" data-drawer-action="wallpaper">[ WALLPAPER ON/OFF ]</button>
+    </nav>
+    <section class="drawer-section">
+      <h3>PREFERÊNCIAS</h3>
+      <label class="drawer-toggle"><input type="checkbox" data-pref="inApp"  checked> Toast in-app</label>
+      <label class="drawer-toggle"><input type="checkbox" data-pref="native" checked> Notificação do sistema</label>
+      <label class="drawer-toggle"><input type="checkbox" data-pref="sound"  checked> Som ao receber resposta</label>
+    </section>
+    <footer class="drawer-footer">
+      <span id="drawer-perm">nível: —</span>
+    </footer>
+  </aside>
 
   <!-- ── DESKTOP ─────────────────────────────────────────── -->
   <div id="desktop" style="margin-top:28px;">
@@ -164,6 +190,106 @@
     window.addEventListener('load', () => {
       window.toolsReady.then(() => setTimeout(openTerminal, 300))
     })
+
+    // ── Menu Hamburger (mobile) ──────────────────────────────
+    ;(function () {
+      const drawer   = document.getElementById('mobile-drawer')
+      const backdrop = document.getElementById('mobile-drawer-backdrop')
+      if (!drawer || !backdrop) return
+
+      function open() {
+        drawer.classList.add('open')
+        backdrop.classList.add('open')
+        document.body.classList.add('drawer-open')
+        _refreshDrawerState()
+      }
+      function close() {
+        drawer.classList.remove('open')
+        backdrop.classList.remove('open')
+        document.body.classList.remove('drawer-open')
+      }
+      window.toggleMobileDrawer = () => {
+        drawer.classList.contains('open') ? close() : open()
+      }
+      window.closeMobileDrawer = close
+
+      // Ações dos botões
+      drawer.querySelectorAll('[data-drawer-action]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const act = btn.dataset.drawerAction
+          close()
+          switch (act) {
+            case 'terminal':   if (typeof openTerminal === 'function') openTerminal();  break
+            case 'sysmon':     if (typeof openSysMon   === 'function') openSysMon();    break
+            case 'wallpaper':  if (typeof toggleWallpaper === 'function') toggleWallpaper(); break
+            case 'workspaces': _quickList('browser.workspace.list', 'WORKSPACES', 'name', 'description'); break
+            case 'macros':     _quickList('macro.list',              'MACROS',     'name', 'trigger');     break
+          }
+        })
+      })
+
+      // Preferências de notificação
+      drawer.querySelectorAll('input[data-pref]').forEach(chk => {
+        const key = chk.dataset.pref
+        chk.addEventListener('change', () => {
+          if (typeof window.setNotificationPref === 'function') {
+            window.setNotificationPref(key, chk.checked)
+          }
+        })
+      })
+
+      // Fecha com ESC
+      window.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && drawer.classList.contains('open')) close()
+      })
+
+      // Se o usuário girar para desktop enquanto o drawer estava aberto, fecha
+      window.matchMedia('(min-width: 769px)').addEventListener('change', e => {
+        if (e.matches) close()
+      })
+
+      async function _refreshDrawerState() {
+        // sincroniza checkboxes com preferências atuais
+        if (typeof window.getNotificationPrefs === 'function') {
+          const prefs = window.getNotificationPrefs()
+          drawer.querySelectorAll('input[data-pref]').forEach(chk => {
+            const key = chk.dataset.pref
+            if (key in prefs) chk.checked = !!prefs[key]
+          })
+        }
+        // nível de permissão
+        try {
+          const perm = window.permissionManager?.name
+          const el = document.getElementById('drawer-perm')
+          if (el && perm) el.textContent = `nível: ${perm}`
+        } catch { /* ignora */ }
+      }
+
+      async function _quickList(toolName, title, primaryKey, secondaryKey) {
+        // Abre o terminal (se necessário) e imprime a listagem
+        try {
+          if (typeof openTerminal === 'function') openTerminal()
+          await window.toolsReady
+          const list = await window.toolManager.execute(toolName, {}, { source: 'drawer' })
+          const out = document.querySelector('.terminal-output')
+          if (!out) return
+          const line = (h) => { const d = document.createElement('div'); d.innerHTML = h; out.appendChild(d) }
+          line(`<span class="t-dim">── ${title} (${list.length}) ────────────</span>`)
+          if (!list.length) {
+            line('<span class="t-dim">(vazio)</span>')
+          } else {
+            list.forEach(it => {
+              const p = it[primaryKey] || '?'
+              const s = it[secondaryKey] || ''
+              line(`  <span class="t-aris">${p}</span> <span class="t-dim">${s ? '— ' + s : ''}</span>`)
+            })
+          }
+          out.scrollTop = out.scrollHeight
+        } catch (err) {
+          console.warn('[drawer]', err)
+        }
+      }
+    })()
   </script>
 
 </body>
