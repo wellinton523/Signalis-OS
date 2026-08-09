@@ -455,3 +455,155 @@ body { animation: flicker 8s infinite; }
 .os-toast.success { border-color: #8cffb2; box-shadow: 0 0 18px #8cffb255, 0 4px 20px rgba(0,0,0,.4); }
 .os-toast.warn    { border-color: var(--yellow-warn); box-shadow: 0 0 18px #bf9c1a55, 0 4px 20px rgba(0,0,0,.4); }
 .os-toast.error   { border-color: var(--red-alert); box-shadow: 0 0 18px #bf202055, 0 4px 20px rgba(0,0,0,.4); }
+
+/* ── RESPONSIVE / MOBILE ───────────────────────────────────── */
+/* Em telas <= 768px, o desktop metáfora dá lugar a uma UI cheia
+   de tela com uma janela ativa por vez. */
+@media (max-width: 768px) {
+  /* Titlebar fixo mais compacto */
+  #titlebar {
+    height: 32px;
+    font-size: 11px;
+    padding: 0 8px;
+  }
+  #titlebar-title {
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 55vw;
+  }
+  .win-ctrl {
+    min-width: 34px;
+    min-height: 30px;
+    font-size: 16px;
+  }
+
+  #desktop { margin-top: 32px !important; }
+
+  /* Janelas ocupam a tela toda no mobile */
+  .os-window {
+    top: 32px !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: calc(100vh - 32px - 88px) !important; /* 32 top + 88 taskbar */
+    border-radius: 0 !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+  }
+  .os-window-titlebar {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .os-window-body {
+    padding: 8px !important;
+  }
+
+  /* Terminal com input maior e legível */
+  .terminal-output {
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-overflow-scrolling: touch;
+  }
+  #terminal-input {
+    font-size: 15px !important; /* >=16px evita zoom no iOS; usamos 15px + font-boost */
+    padding: 8px !important;
+    min-height: 40px;
+  }
+  .terminal-input-row {
+    padding: 4px 6px;
+  }
+  .terminal-prefix {
+    font-size: 12px;
+    max-width: 30vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Taskbar rola horizontalmente no lugar de quebrar linha */
+  #taskbar {
+    height: 88px !important;
+    padding: 6px 4px !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-content: flex-start;
+    -webkit-overflow-scrolling: touch;
+  }
+  .taskbar-btn {
+    font-size: 10px !important;
+    padding: 6px 8px !important;
+    min-height: 34px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+  .taskbar-clock {
+    font-size: 11px !important;
+    margin-left: auto;
+    align-self: center;
+  }
+
+  /* Toast: quase largura total */
+  #notification-container {
+    top: 36px;
+    max-width: 96vw;
+    width: 96vw;
+  }
+  .os-toast {
+    min-width: 0;
+    width: 100%;
+    max-width: 96vw;
+    font-size: 12px;
+  }
+
+  /* Auth card responsivo */
+  .auth-card {
+    width: min(90vw, 340px) !important;
+    padding: 22px !important;
+  }
+  .auth-card input,
+  .auth-card button {
+    font-size: 15px !important;
+    padding: 12px !important;
+    min-height: 44px;
+  }
+
+  /* SysMon compacto */
+  .sysmon-body {
+    padding: 6px !important;
+  }
+  .sysmon-row label {
+    font-size: 11px;
+  }
+  .sysmon-grid {
+    font-size: 11px !important;
+  }
+}
+
+/* Telas muito estreitas (celular retrato pequeno) */
+@media (max-width: 480px) {
+  #titlebar-controls .win-ctrl { min-width: 40px; }
+  .taskbar-btn { font-size: 9px !important; padding: 6px !important; }
+  #wallpaper { font-size: 10px; }
+}
+
+/* Preferência por menos movimento: reduz animações do toast */
+@media (prefers-reduced-motion: reduce) {
+  .os-toast { transition: opacity 0.15s ease; }
+  .os-toast.show, .os-toast.hide { transform: none; }
+}
+
+/* Melhora experiência de toque */
+@media (hover: none) and (pointer: coarse) {
+  button, .taskbar-btn, .win-ctrl, .os-toast-close {
+    -webkit-tap-highlight-color: rgba(74, 158, 255, 0.25);
+  }
+  .terminal-output, .os-window-body {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
