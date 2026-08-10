@@ -227,4 +227,119 @@
   }
 
   window.aris9Voice = { startRecord, stopRecord, startContinuousRecord, speak, stopSpeaking, isRecording, createWakeWordDetector }
+
+  // ── Orquestrador GLOBAL de wake word ─────────────────────────
+  // Roda mesmo com o modo voz fechado, mostra indicador visual e
+  // toca um bip natural (2 tons ascendentes) quando dispara.
+
+  let _wakeIndicator = null
+  function _ensureWakeIndicator () {
+    if (_wakeIndicator && document.body.contains(_wakeIndicator)) return _wakeIndicator
+    const el = document.createElement('span')
+    el.id = 'wake-indicator'
+    el.setAttribute('data-testid', 'wake-indicator')
+    el.setAttribute('role', 'status')
+    el.setAttribute('aria-label', 'Wake word ativa em background')
+    el.title = 'Wake word ativa — clique para abrir o modo voz'
+    el.style.display = 'none'
+    el.addEventListener('click', () => { try { window.openVoiceChat?.() } catch {} })
+    const tb = document.getElementById('titlebar')
+    if (tb) {
+      // insere antes do título
+      const title = tb.querySelector('#titlebar-title')
+      if (title) tb.insertBefore(el, title)
+      else tb.appendChild(el)
+    } else {
+      document.body.appendChild(el)
+    }
+    _wakeIndicator = el
+    return el
+  }
+  function _updateIndicator (visible) {
+    const el = _ensureWakeIndicator()
+    if (visible) { el.style.display = 'inline-block'; el.classList.add('active') }
+    else         { el.style.display = 'none';         el.classList.remove('active') }
+  }
+
+  // Bip natural (2 tons ascendentes tipo confirmação de assistente)
+  function _wakeBeep () {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext
+      if (!AC) return
+      const ctx = new AC()
+      function tone (freq, startAt, dur, peakGain = 0.14) {
+        const osc = ctx.createOscillator()
+        const g = ctx.createGain()
+        osc.type = 'triangle'
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + startAt)
+        osc.connect(g); g.connect(ctx.destination)
+        g.gain.setValueAtTime(0.0001, ctx.currentTime + startAt)
+        g.gain.exponentialRampToValueAtTime(peakGain, ctx.currentTime + startAt + 0.015)
+        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + startAt + dur)
+        osc.start(ctx.currentTime + startAt)
+        osc.stop(ctx.currentTime + startAt + dur + 0.02)
+      }
+      tone(880, 0,    0.09, 0.13)   // A5
+      tone(1320, 0.10, 0.13, 0.16)  // E6
+      setTimeout(() => { try { ctx.close() } catch {} }, 500)
+    } catch { /* ignora */ }
+  }
+
+  const aris9Wake = {
+    _detector: null,
+    isActive () { return !!(this._detector && this._detector.isActive?.()) },
+    beep () { _wakeBeep() },
+    async start () {
+      if (this._detector) return
+      const prefs = window.aris9Prefs?.get?.() || {}
+      const word = String(prefs.wakeWord || 'aris').toLowerCase().trim() || 'aris'
+      try {
+        this._detector = createWakeWordDetector(word, () => {
+          _wakeBeep()
+          try { window.openVoiceChat?.() } catch {}
+          try { window.aris9VoiceKick?.(true) } catch {}
+        })
+        this._detector.start()
+        _updateIndicator(true)
+      } catch (err) {
+        this._detector = null
+        _updateIndicator(false)
+        // Reverte a pref para não ficar pendente
+        window.aris9Prefs?.set('wakeWordEnabled', false)
+        try { window.showNotification?.('ARIS-9', 'Wake word indisponível: ' + err.message, 'warn') } catch {}
+        throw err
+      }
+    },
+    stop () {
+      if (this._detector) { try { this._detector.stop() } catch {} this._detector = null }
+      _updateIndicator(false)
+    },
+    reboot () {
+      this.stop()
+      if (window.aris9Prefs?.get?.().wakeWordEnabled) {
+        this.start().catch(() => {})
+      }
+    }
+  }
+  window.aris9Wake = aris9Wake
+
+  // Reage a mudanças de pref (do drawer ou do modo voz)
+  window.addEventListener('aris9:pref-changed', (ev) => {
+    const { key, value } = ev.detail || {}
+    if (key === 'wakeWordEnabled') {
+      if (value) aris9Wake.start().catch(() => {})
+      else       aris9Wake.stop()
+    } else if (key === 'wakeWord' && aris9Wake.isActive()) {
+      aris9Wake.reboot()
+    }
+  })
+
+  // Auto-start após carregamento se a pref estava ligada da sessão anterior
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      if (window.aris9Prefs?.get?.().wakeWordEnabled) {
+        aris9Wake.start().catch(() => {})
+      }
+    }, 800)
+  })
 })()

@@ -196,38 +196,25 @@
     micBtn.style.boxShadow = `0 0 ${30 + intensity * 60}px rgba(255,90,110,${0.4 + intensity * 0.5})`
   }
 
-  // ── Wake word detector ─────────────────────────────────────
-  let wakeDetector = null
+  // ── Wake word: gerenciado pelo aris9Wake global (voice.js) ──
+  // Aqui só sincronizamos o UI do modo voz.
   function _syncWakeDetector (forceReboot = false) {
+    if (!window.aris9Wake) return
     const prefs = window.aris9Prefs?.get?.() || {}
-    const shouldRun = !!prefs.wakeWordEnabled && overlay?.classList.contains('open')
-
-    if (wakeDetector && (forceReboot || !shouldRun)) {
-      try { wakeDetector.stop() } catch {}
-      wakeDetector = null
-    }
-    if (!shouldRun) return
-    if (wakeDetector) return  // já rodando
-
-    try {
-      const word = String(prefs.wakeWord || 'aris').toLowerCase().trim() || 'aris'
-      wakeDetector = window.aris9Voice.createWakeWordDetector(word, async () => {
-        // Se está no meio de algo, ignora para não sobrepor
-        if (busy || window.aris9Voice.isRecording()) return
-        // Beep curto para dar sinal
-        try { new Audio('data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=').play() } catch {}
-        _setStatus(`Ouvi "${word}" — falando pra você agora…`)
-        _startTalking(true).catch(err => console.debug('[wake] start err', err))
-      })
-      wakeDetector.start()
+    if (prefs.wakeWordEnabled) {
+      if (forceReboot) window.aris9Wake.reboot()
+      else if (!window.aris9Wake.isActive()) window.aris9Wake.start().catch(() => {})
+      const word = String(prefs.wakeWord || 'aris')
       _setStatus(`Wake word ativa: diga "${word}" para começar.`)
-    } catch (err) {
-      _setStatus('Wake word indisponível: ' + err.message)
-      // desmarca o checkbox
-      const chk = overlay?.querySelector('#vc-wake')
-      if (chk) chk.checked = false
-      window.aris9Prefs?.set('wakeWordEnabled', false)
     }
+    // Se estiver desligada, aris9Wake já foi parado pelo listener de pref-changed
+  }
+
+  // Kick externo (chamado pelo aris9Wake quando a palavra é ouvida)
+  window.aris9VoiceKick = async function (fromWake = false) {
+    if (!overlay || !overlay.classList.contains('open')) open()
+    // aguarda o overlay aparecer para o mic estar no DOM
+    setTimeout(() => _startTalking(true).catch(() => {}), fromWake ? 300 : 0)
   }
 
   async function _handleTranscribedText (text) {
@@ -302,7 +289,8 @@
     if (window.aris9Voice?.isRecording()) {
       window.aris9Voice.stopRecord().catch(() => {})
     }
-    if (wakeDetector) { try { wakeDetector.stop() } catch {} wakeDetector = null }
+    // Wake detector é global — NÃO paramos aqui, ele continua em background
+    // se a pref wakeWordEnabled estiver ligada.
   }
 
   window.openVoiceChat  = open

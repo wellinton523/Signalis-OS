@@ -930,3 +930,29 @@ body.vc-open { overflow: hidden; }
   #vc-wake-word { width: 70px; }
   .vc-toggle { font-size: 10px; }
 }
+
+/* ── Indicador de WAKE WORD ATIVA no titlebar ─────────────── */
+#wake-indicator {
+  display: none;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #ff3040;
+  margin: 0 8px 0 6px;
+  box-shadow: 0 0 6px #ff3040aa;
+  cursor: pointer;
+  align-self: center;
+  flex-shrink: 0;
+  animation: wakePulse 1.5s ease-in-out infinite;
+  vertical-align: middle;
+}
+#wake-indicator:hover {
+  transform: scale(1.15);
+}
+@keyframes wakePulse {
+  0%   { opacity: 0.55; box-shadow: 0 0 3px #ff3040aa,  0 0 0    #ff304066; transform: scale(0.9); }
+  50%  { opacity: 1;    box-shadow: 0 0 12px #ff3040dd, 0 0 20px #ff304088; transform: scale(1.15); }
+  100% { opacity: 0.55; box-shadow: 0 0 3px #ff3040aa,  0 0 0    #ff304066; transform: scale(0.9); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #wake-indicator { animation: none; opacity: 1; }
+}
