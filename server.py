@@ -12,6 +12,9 @@ import secrets
 import base64
 import asyncio
 import io
+import socket
+import ipaddress
+import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, urlencode
@@ -194,6 +197,22 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path.startswith("/api/browser/"):
             self._handle_browser_api(parsed)
+            return
+
+        if parsed.path == "/api/network/request":
+            self._handle_network_request(parsed)
+            return
+
+        if parsed.path == "/api/code/run":
+            self._handle_code_run(parsed)
+            return
+
+        if parsed.path.startswith("/api/vscode/"):
+            self._handle_vscode(parsed)
+            return
+
+        if parsed.path.startswith("/api/git/"):
+            self._handle_git(parsed)
             return
 
         # ── Proxies Existentes ────────────────────────────────
@@ -1106,6 +1125,267 @@ class Handler(BaseHTTPRequestHandler):
             return json.dumps(ollama_fmt).encode("utf-8")
         except Exception:
             return raw_body
+
+    # ── Network API (chamadas HTTP genéricas a APIs externas) ─
+    def _is_safe_host(self, hostname: str) -> bool:
+        """Bloqueia loopback, redes privadas (RFC1918) e link-local — evita que
+        a tool network.request seja usada pra alcançar serviços internos
+        (localhost, rede local, metadata endpoints de cloud, etc.)."""
+        try:
+            infos = socket.getaddrinfo(hostname, None)
+        except socket.gaierror:
+            return False
+        for info in infos:
+            ip = ipaddress.ip_address(info[4][0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                return False
+        return True
+
+    def _handle_network_request(self, parsed):
+        try:
+            data    = self._read_json_body()
+            url     = str(data.get("url", "")).strip()
+            method  = str(data.get("method", "GET")).upper()
+            headers = data.get("headers") or {}
+            body    = data.get("body")
+
+            if not url.startswith(("http://", "https://")):
+                raise ValueError("URL deve começar com http:// ou https://.")
+            if method not in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"):
+                raise ValueError(f"Método HTTP não suportado: {method}")
+            if not isinstance(headers, dict):
+                raise ValueError("headers deve ser um objeto.")
+
+            hostname = urlparse(url).hostname or ""
+            if not self._is_safe_host(hostname):
+                raise ValueError("Host bloqueado: URLs para endereços privados/locais não são permitidas.")
+
+            req_body = None
+            send_headers = dict(headers)
+            if body is not None and method not in ("GET", "HEAD"):
+                if isinstance(body, (dict, list)):
+                    req_body = json.dumps(body).encode("utf-8")
+                    send_headers.setdefault("Content-Type", "application/json")
+                else:
+                    req_body = str(body).encode("utf-8")
+
+            req = urllib.request.Request(url, data=req_body, method=method, headers=send_headers)
+            try:
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    raw    = resp.read(524288)  # max 512 KB
+                    status = resp.status
+                    resp_headers = dict(resp.headers.items())
+            except urllib.error.HTTPError as e:
+                raw          = e.read(524288)
+                status       = e.code
+                resp_headers = dict(e.headers.items()) if e.headers else {}
+
+            content_type = resp_headers.get("Content-Type", "")
+            charset = "utf-8"
+            if "charset=" in content_type:
+                charset = content_type.split("charset=")[-1].split(";")[0].strip()
+            text = raw.decode(charset, errors="replace")
+
+            parsed_json = None
+            if "json" in content_type:
+                try:
+                    parsed_json = json.loads(text)
+                except Exception:
+                    parsed_json = None
+
+            self._send_json({
+                "status": status,
+                "ok": 200 <= status < 300,
+                "headers": resp_headers,
+                "text": text[:20000],
+                "json": parsed_json,
+                "truncated": len(text) > 20000
+            })
+        except ValueError as e:
+            self._send_error(400, str(e))
+        except Exception as e:
+            self._send_error(502, f"Falha na requisição: {e}")
+
+    # ── Execução de código (path existente ou snippet inline) ──
+    _CODE_EXT_MAP = {
+        ".py":  ["python"],
+        ".js":  ["node"],
+        ".mjs": ["node"],
+        ".sh":  ["bash"],
+        ".ps1": ["powershell", "-File"],
+    }
+    _CODE_LANG_MAP = {
+        "python":     {"ext": ".py",  "cmd": ["python"]},
+        "javascript": {"ext": ".js",  "cmd": ["node"]},
+        "node":       {"ext": ".js",  "cmd": ["node"]},
+        "bash":       {"ext": ".sh",  "cmd": ["bash"]},
+        "shell":      {"ext": ".sh",  "cmd": ["bash"]},
+        "powershell": {"ext": ".ps1", "cmd": ["powershell", "-File"]},
+    }
+
+    def _handle_code_run(self, parsed):
+        tmp_created = None
+        try:
+            self._require_remote_access()
+            data    = self._read_json_body()
+            timeout = min(int(data.get("timeout", 30)), 120)
+            args    = data.get("args") or []
+            if not isinstance(args, list):
+                raise ValueError("args deve ser uma lista.")
+
+            if data.get("path"):
+                target = self._local_path(data["path"])
+                if not target.exists():
+                    raise ValueError(f"Arquivo não encontrado: {target}")
+                cmd_base = self._CODE_EXT_MAP.get(target.suffix.lower())
+                if not cmd_base:
+                    raise ValueError(f"Extensão não suportada: {target.suffix}. Suportadas: {', '.join(self._CODE_EXT_MAP)}")
+                cmd = cmd_base + [str(target)] + [str(a) for a in args]
+            elif data.get("code"):
+                language = str(data.get("language", "")).lower()
+                info = self._CODE_LANG_MAP.get(language)
+                if not info:
+                    raise ValueError(f"language deve ser um de: {', '.join(self._CODE_LANG_MAP)}")
+                tmp_created = Path(tempfile.gettempdir()) / f"signalis_run_{secrets.token_hex(6)}{info['ext']}"
+                tmp_created.write_text(data["code"], encoding="utf-8")
+                cmd = info["cmd"] + [str(tmp_created)] + [str(a) for a in args]
+            else:
+                raise ValueError("Informe 'path' (arquivo existente) ou 'code' + 'language' (snippet inline).")
+
+            stdout, stderr, code = self._run_cli(cmd, timeout=timeout)
+            self._send_json({"ok": code == 0, "exitCode": code, "stdout": stdout[:20000], "stderr": stderr[:20000]})
+        except (ValueError, PermissionError) as exc:
+            self._send_error(423 if isinstance(exc, PermissionError) else 400, str(exc))
+        finally:
+            if tmp_created is not None and tmp_created.exists():
+                try:
+                    tmp_created.unlink()
+                except OSError:
+                    pass
+
+    # ── VS Code (via CLI `code`) ───────────────────────────────
+    def _run_cli(self, args, timeout=20):
+        try:
+            result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+            return result.stdout, result.stderr, result.returncode
+        except FileNotFoundError:
+            raise ValueError(f"Comando não encontrado: '{args[0]}'. Verifique se está instalado e no PATH.")
+        except subprocess.TimeoutExpired:
+            raise ValueError(f"Comando '{args[0]}' excedeu o tempo limite ({timeout}s).")
+
+    def _handle_vscode(self, parsed):
+        try:
+            self._require_remote_access()
+            data = self._read_json_body()
+            op = parsed.path.rsplit("/", 1)[-1]
+
+            if op == "open":
+                target = self._local_path(data.get("path"))
+                if not target.exists():
+                    raise ValueError(f"Caminho não encontrado: {target}")
+                cmd = ["code"]
+                if data.get("newWindow"):
+                    cmd.append("-n")
+                line = data.get("line")
+                if line:
+                    cmd += ["-g", f"{target}:{int(line)}"]
+                else:
+                    cmd.append(str(target))
+                _, stderr, code = self._run_cli(cmd)
+                self._send_json({"opened": str(target), "ok": code == 0, "stderr": stderr})
+                return
+
+            if op == "diff":
+                fileA = self._local_path(data.get("fileA"))
+                fileB = self._local_path(data.get("fileB"))
+                for f in (fileA, fileB):
+                    if not f.exists():
+                        raise ValueError(f"Arquivo não encontrado: {f}")
+                _, stderr, code = self._run_cli(["code", "--diff", str(fileA), str(fileB)])
+                self._send_json({"diffOpened": True, "ok": code == 0, "stderr": stderr})
+                return
+
+            raise ValueError(f"Operação vscode desconhecida: {op}")
+        except (ValueError, PermissionError) as exc:
+            self._send_error(423 if isinstance(exc, PermissionError) else 400, str(exc))
+
+    # ── Git (subprocess por lista de argumentos — nunca shell=True) ──
+    def _git_repo(self, repo_path):
+        repo = self._local_path(repo_path)
+        if not repo.exists() or not repo.is_dir():
+            raise ValueError(f"Diretório não encontrado: {repo}")
+        _, _, code = self._run_cli(["git", "-C", str(repo), "rev-parse", "--is-inside-work-tree"])
+        if code != 0:
+            raise ValueError(f"Não é um repositório git: {repo}")
+        return repo
+
+    def _handle_git(self, parsed):
+        try:
+            self._require_remote_access()
+            data = self._read_json_body()
+            action = parsed.path.rsplit("/", 1)[-1]
+            repo = self._git_repo(data.get("repoPath"))
+            base = ["git", "-C", str(repo)]
+
+            if action == "status":
+                stdout, stderr, code = self._run_cli(base + ["status", "--porcelain=v1", "-b"])
+                self._send_json({"ok": code == 0, "status": stdout, "stderr": stderr})
+                return
+
+            if action == "diff":
+                cmd = base + ["diff"]
+                if data.get("staged"):
+                    cmd.append("--staged")
+                if data.get("file"):
+                    cmd += ["--", str(data["file"])]
+                stdout, stderr, code = self._run_cli(cmd, timeout=30)
+                self._send_json({"ok": code == 0, "diff": stdout[:20000], "truncated": len(stdout) > 20000, "stderr": stderr})
+                return
+
+            if action == "log":
+                limit = min(int(data.get("limit", 15)), 100)
+                stdout, stderr, code = self._run_cli(base + ["log", f"-n{limit}", "--pretty=format:%h|%an|%ad|%s", "--date=short"])
+                commits = [dict(zip(("hash", "author", "date", "message"), line.split("|", 3)))
+                           for line in stdout.splitlines() if line.strip()]
+                self._send_json({"ok": code == 0, "commits": commits, "stderr": stderr})
+                return
+
+            if action == "add":
+                files = data.get("files")
+                if not isinstance(files, list) or not files:
+                    raise ValueError("files deve ser uma lista não-vazia de caminhos relativos ao repo.")
+                stdout, stderr, code = self._run_cli(base + ["add", "--"] + [str(f) for f in files])
+                self._send_json({"ok": code == 0, "added": files, "stderr": stderr})
+                return
+
+            if action == "commit":
+                message = str(data.get("message", "")).strip()
+                if not message:
+                    raise ValueError("message é obrigatória.")
+                stdout, stderr, code = self._run_cli(base + ["commit", "-m", message])
+                self._send_json({"ok": code == 0, "output": stdout, "stderr": stderr})
+                return
+
+            if action == "push":
+                remote = str(data.get("remote", "origin"))
+                branch = data.get("branch")
+                cmd = base + ["push", remote] + ([str(branch)] if branch else [])
+                stdout, stderr, code = self._run_cli(cmd, timeout=60)
+                self._send_json({"ok": code == 0, "output": stdout, "stderr": stderr})
+                return
+
+            if action == "branch":
+                new_branch = data.get("name")
+                if new_branch:
+                    stdout, stderr, code = self._run_cli(base + ["checkout", "-b", str(new_branch)])
+                else:
+                    stdout, stderr, code = self._run_cli(base + ["branch"])
+                self._send_json({"ok": code == 0, "output": stdout, "stderr": stderr})
+                return
+
+            raise ValueError(f"Ação git desconhecida: {action}")
+        except (ValueError, PermissionError) as exc:
+            self._send_error(423 if isinstance(exc, PermissionError) else 400, str(exc))
 
     # ── Browser API (fetch / scrape) ──────────────────────────
     def _handle_browser_api(self, parsed):
