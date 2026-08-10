@@ -68,3 +68,10 @@ Iteração 4: Backend **16/16 pytest** (auth, guards, TTS 200 audio/mpeg real, S
 - Pacotes gerenciados: `python-dotenv` (obrigatório), `emergentintegrations` (opcional, extra-index-url da Emergent), `psutil` (opcional), `pyngrok` (opcional).
 - Flag `--no-install` para pular a instalação automática. Se um obrigatório falhar, `sys.exit(1)` com instrução clara. Opcionais viram warn com stderr resumido.
 - Testado com pacote removido: launcher detectou, instalou silenciosamente e prosseguiu.
+
+### Fase 12 — Fallback OpenAI + requirements.txt
+- `server.py`: detecção automática do backend de voz (`VOICE_BACKEND = "emergent"` OR `"openai"`), preferindo `emergentintegrations` se disponível, senão a lib `openai` (PyPI público) usando `OPENAI_API_KEY`. Ambos os handlers STT/TTS suportam os dois caminhos com a mesma API.
+- `launch.py`: PY_DEPS agora inclui `openai` (opcional, público) além de `emergentintegrations` (opcional, extra-index). Mensagem de erro melhor quando ambos ausentes: dá o comando exato de instalação.
+- Novo `requirements.txt` documenta as opções A (openai) e B (emergent) com instruções claras.
+- `env.example`: nova seção "── Voz" com OPENAI_API_KEY e EMERGENT_LLM_KEY, explicando quando usar cada uma.
+- Validado: TTS via emergent backend continua devolvendo 200 audio/mpeg; simulação de emergent ausente confirmou fallback para lib `openai`.

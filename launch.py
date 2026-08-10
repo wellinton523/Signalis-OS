@@ -111,6 +111,10 @@ def check_python():
 PY_DEPS = [
     # (pip_name,              import_name,           required, extra_pip_args)
     ("python-dotenv",         "dotenv",              True,    []),
+    # Voz (STT/TTS) — precisa de UMA das duas libs abaixo.
+    # 'openai' está no PyPI público (funciona em qualquer lugar com OPENAI_API_KEY).
+    ("openai",                "openai",              False,   []),
+    # 'emergentintegrations' só funciona dentro do ambiente Emergent (usa EMERGENT_LLM_KEY).
     ("emergentintegrations",  "emergentintegrations", False,  [
         "--extra-index-url", "https://d33sy5i8bnduwe.cloudfront.net/simple/"
     ]),

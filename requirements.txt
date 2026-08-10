@@ -1,0 +1,19 @@
+# SIGNALIS-OS — dependências Python
+# Instale tudo com: pip install -r requirements.txt
+
+# Obrigatória (carrega .env em server.py e launch.py)
+python-dotenv>=1.0.0
+
+# Voz (Whisper STT + OpenAI TTS). Escolha UMA das opções:
+
+# Opção A — Rodando FORA do ambiente Emergent (recomendado para uso local).
+# Você precisa exportar OPENAI_API_KEY no .env.
+openai>=1.40.0
+
+# Opção B — Rodando DENTRO do ambiente Emergent (usa EMERGENT_LLM_KEY).
+# Requer extra-index-url. Instale manualmente:
+#   pip install emergentintegrations --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
+
+# Opcionais — o servidor degrada graciosamente se ausentes
+psutil>=5.9.0     # métricas de CPU/RAM/discos no SysMon
+pyngrok>=7.0.0    # túnel público via ngrok (comando .remote no terminal)

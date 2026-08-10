@@ -30,12 +30,52 @@ try:
 except ImportError:
     HAS_PSUTIL = False
 
-# Integrações de voz (Whisper STT + OpenAI TTS via Emergent LLM Key)
+# Integrações de voz (Whisper STT + OpenAI TTS)
+# Suporta os DOIS backends em paralelo:
+#   - emergentintegrations (Emergent LLM key, funciona só dentro do Emergent)
+#   - openai (biblioteca pública, usa OPENAI_API_KEY)
+# O servidor tenta emergent primeiro se EMERGENT_LLM_KEY estiver setada;
+# senão usa openai se OPENAI_API_KEY estiver setada.
+_HAS_EMERGENT = False
+_HAS_OPENAI   = False
 try:
     from emergentintegrations.llm.openai import OpenAISpeechToText, OpenAITextToSpeech
-    HAS_VOICE = True
+    _HAS_EMERGENT = True
 except ImportError:
-    HAS_VOICE = False
+    pass
+try:
+    from openai import OpenAI as _OpenAIClient
+    _HAS_OPENAI = True
+except ImportError:
+    pass
+HAS_VOICE = _HAS_EMERGENT or _HAS_OPENAI
+
+def _pick_voice_backend():
+    """Retorna (backend, api_key) — 'emergent'|'openai'|None."""
+    em_key = os.getenv("EMERGENT_LLM_KEY", "").strip()
+    oa_key = os.getenv("OPENAI_API_KEY",   "").strip()
+    if _HAS_EMERGENT and em_key:
+        return "emergent", em_key
+    if _HAS_OPENAI and oa_key:
+        return "openai", oa_key
+    return None, ""
+
+def _voice_setup_hint():
+    """Mensagem de erro específica dizendo o que instalar/configurar."""
+    parts = []
+    if not (_HAS_EMERGENT or _HAS_OPENAI):
+        parts.append("Instale a lib de voz: 'pip install openai' (recomendado) OU 'pip install emergentintegrations --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/'.")
+    em_key = os.getenv("EMERGENT_LLM_KEY", "").strip()
+    oa_key = os.getenv("OPENAI_API_KEY",   "").strip()
+    if not em_key and not oa_key:
+        parts.append("Configure OPENAI_API_KEY no /app/.env (crie em https://platform.openai.com/api-keys) OU EMERGENT_LLM_KEY (se rodando dentro do Emergent).")
+    elif _HAS_EMERGENT and not _HAS_OPENAI and not em_key:
+        parts.append("Você tem emergentintegrations instalado mas EMERGENT_LLM_KEY não está setada. Rode 'pip install openai' e configure OPENAI_API_KEY, OU exporte EMERGENT_LLM_KEY no .env.")
+    elif _HAS_OPENAI and not _HAS_EMERGENT and not oa_key:
+        parts.append("Você tem openai instalado mas OPENAI_API_KEY não está setada no .env.")
+    elif _HAS_EMERGENT and _HAS_OPENAI and not em_key and not oa_key:
+        parts.append("Nenhuma chave configurada. Adicione OPENAI_API_KEY ou EMERGENT_LLM_KEY no /app/.env.")
+    return " ".join(parts) if parts else "Serviço de voz indisponível."
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.getenv("PORT", "8000"))
@@ -277,12 +317,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_voice_stt(self):
         """POST /api/voice/stt — recebe áudio (webm/wav/mp3) e devolve texto (pt-BR)."""
-        if not HAS_VOICE:
-            self._send_error(503, "emergentintegrations não instalado (pip install emergentintegrations).")
-            return
-        key = os.getenv("EMERGENT_LLM_KEY") or API_KEY
-        if not key:
-            self._send_error(503, "EMERGENT_LLM_KEY não configurada.")
+        backend, key = _pick_voice_backend()
+        if not backend:
+            self._send_error(503, _voice_setup_hint())
             return
 
         length = int(self.headers.get("Content-Length", "0"))
@@ -291,7 +328,6 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         content_type = self.headers.get("Content-Type", "audio/webm")
-        # Deduz extensão do content-type; fallback webm
         ext = "webm"
         if "wav" in content_type: ext = "wav"
         elif "mp3" in content_type or "mpeg" in content_type: ext = "mp3"
@@ -300,28 +336,29 @@ class Handler(BaseHTTPRequestHandler):
 
         audio_bytes = self.rfile.read(length)
 
-        async def _do():
-            stt = OpenAISpeechToText(api_key=key)
-            buf = io.BytesIO(audio_bytes)
-            buf.name = f"audio.{ext}"
-            resp = await stt.transcribe(file=buf, model="whisper-1", response_format="json", language="pt")
-            return getattr(resp, "text", str(resp))
-
         try:
-            text_out = asyncio.run(_do())
-            self._send_json({"text": text_out or ""})
+            if backend == "emergent":
+                async def _do():
+                    stt = OpenAISpeechToText(api_key=key)
+                    buf = io.BytesIO(audio_bytes); buf.name = f"audio.{ext}"
+                    resp = await stt.transcribe(file=buf, model="whisper-1", response_format="json", language="pt")
+                    return getattr(resp, "text", str(resp))
+                text_out = asyncio.run(_do())
+            else:  # openai
+                client = _OpenAIClient(api_key=key)
+                buf = io.BytesIO(audio_bytes); buf.name = f"audio.{ext}"
+                resp = client.audio.transcriptions.create(model="whisper-1", file=buf, response_format="json", language="pt")
+                text_out = getattr(resp, "text", str(resp))
+            self._send_json({"text": text_out or "", "backend": backend})
         except Exception as e:
-            print(f"[voice.stt] erro: {e}")
-            self._send_error(500, f"Falha na transcrição: {str(e)[:200]}")
+            print(f"[voice.stt] erro ({backend}): {e}")
+            self._send_error(500, f"Falha na transcrição ({backend}): {str(e)[:200]}")
 
     def _handle_voice_tts(self):
         """POST /api/voice/tts — recebe {text, voice?, model?, speed?} e devolve mp3."""
-        if not HAS_VOICE:
-            self._send_error(503, "emergentintegrations não instalado.")
-            return
-        key = os.getenv("EMERGENT_LLM_KEY") or API_KEY
-        if not key:
-            self._send_error(503, "EMERGENT_LLM_KEY não configurada.")
+        backend, key = _pick_voice_backend()
+        if not backend:
+            self._send_error(503, _voice_setup_hint())
             return
 
         try:
@@ -352,25 +389,31 @@ class Handler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             speed = 1.0
 
-        async def _do():
-            tts = OpenAITextToSpeech(api_key=key)
-            return await tts.generate_speech(
-                text=text_in, model=model, voice=voice,
-                speed=speed, response_format="mp3"
-            )
-
         try:
-            audio_bytes = asyncio.run(_do())
+            if backend == "emergent":
+                async def _do():
+                    tts = OpenAITextToSpeech(api_key=key)
+                    return await tts.generate_speech(
+                        text=text_in, model=model, voice=voice,
+                        speed=speed, response_format="mp3"
+                    )
+                audio_bytes = asyncio.run(_do())
+            else:  # openai
+                client = _OpenAIClient(api_key=key)
+                resp = client.audio.speech.create(model=model, voice=voice, input=text_in, response_format="mp3", speed=speed)
+                audio_bytes = resp.content if hasattr(resp, "content") else resp.read()
+
             self.send_response(200)
             self.send_header("Content-Type", "audio/mpeg")
             self.send_header("Content-Length", str(len(audio_bytes)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Voice-Backend", backend)
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(audio_bytes)
         except Exception as e:
-            print(f"[voice.tts] erro: {e}")
-            self._send_error(500, f"Falha na síntese: {str(e)[:200]}")
+            print(f"[voice.tts] erro ({backend}): {e}")
+            self._send_error(500, f"Falha na síntese ({backend}): {str(e)[:200]}")
 
     def _handle_tool_manifest(self):
         tools_root = ROOT / "js" / "tools"
