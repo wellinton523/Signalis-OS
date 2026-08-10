@@ -75,3 +75,9 @@ Iteração 4: Backend **16/16 pytest** (auth, guards, TTS 200 audio/mpeg real, S
 - Novo `requirements.txt` documenta as opções A (openai) e B (emergent) com instruções claras.
 - `env.example`: nova seção "── Voz" com OPENAI_API_KEY e EMERGENT_LLM_KEY, explicando quando usar cada uma.
 - Validado: TTS via emergent backend continua devolvendo 200 audio/mpeg; simulação de emergent ausente confirmou fallback para lib `openai`.
+
+### Fase 13 — Fix backend de voz dinâmico
+- **Bug reportado**: STT respondia 503 "EMERGENT_LLM_KEY não configurada" mesmo com OPENAI_API_KEY presente.
+- **Causa raiz**: `VOICE_BACKEND` era decidido no import (globalmente). Se a lib emergent estava instalada, ficava travado nesse caminho mesmo sem chave.
+- **Fix**: `_pick_voice_backend()` decide POR REQUEST → emergent (se lib+chave) OU openai (se lib+chave) OU (None, ''). `_voice_setup_hint()` gera mensagem específica citando ambas keys/instalações. `_sanitize_provider_error()` remove `sk-...` e `Bearer ...` das mensagens de erro para o usuário. Ambos endpoints retornam header/campo `X-Voice-Backend`.
+- **Testing agent iteração 7**: 25/25 backend (9 novos testes destrutivos + 16 regressão). Zero bugs. Aplicados 3 code-review fixes: dead branch removido, header X-Voice-Backend simétrico no STT, sanitização de sk-***.

@@ -73,9 +73,16 @@ def _voice_setup_hint():
         parts.append("Você tem emergentintegrations instalado mas EMERGENT_LLM_KEY não está setada. Rode 'pip install openai' e configure OPENAI_API_KEY, OU exporte EMERGENT_LLM_KEY no .env.")
     elif _HAS_OPENAI and not _HAS_EMERGENT and not oa_key:
         parts.append("Você tem openai instalado mas OPENAI_API_KEY não está setada no .env.")
-    elif _HAS_EMERGENT and _HAS_OPENAI and not em_key and not oa_key:
-        parts.append("Nenhuma chave configurada. Adicione OPENAI_API_KEY ou EMERGENT_LLM_KEY no /app/.env.")
     return " ".join(parts) if parts else "Serviço de voz indisponível."
+
+# Redige mensagens de erro do provedor para nunca vazar chave/segredo.
+def _sanitize_provider_error(msg):
+    s = str(msg or "")[:200]
+    # Remove qualquer coisa que pareça um bearer/api key
+    import re
+    s = re.sub(r"sk-[A-Za-z0-9_\-]{6,}",     "sk-***REDACTED***",     s)
+    s = re.sub(r"Bearer\s+[A-Za-z0-9_\-\.]+", "Bearer ***REDACTED***", s, flags=re.IGNORECASE)
+    return s
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.getenv("PORT", "8000"))
@@ -349,10 +356,15 @@ class Handler(BaseHTTPRequestHandler):
                 buf = io.BytesIO(audio_bytes); buf.name = f"audio.{ext}"
                 resp = client.audio.transcriptions.create(model="whisper-1", file=buf, response_format="json", language="pt")
                 text_out = getattr(resp, "text", str(resp))
-            self._send_json({"text": text_out or "", "backend": backend})
+            payload = json.dumps({"text": text_out or "", "backend": backend}).encode("utf-8")
+            self._send_response(200, payload, {
+                "Content-Type": "application/json; charset=utf-8",
+                "X-Voice-Backend": backend,
+                "Access-Control-Allow-Origin": "*",
+            })
         except Exception as e:
             print(f"[voice.stt] erro ({backend}): {e}")
-            self._send_error(500, f"Falha na transcrição ({backend}): {str(e)[:200]}")
+            self._send_error(500, f"Falha na transcrição ({backend}): {_sanitize_provider_error(e)}")
 
     def _handle_voice_tts(self):
         """POST /api/voice/tts — recebe {text, voice?, model?, speed?} e devolve mp3."""
@@ -413,7 +425,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(audio_bytes)
         except Exception as e:
             print(f"[voice.tts] erro ({backend}): {e}")
-            self._send_error(500, f"Falha na síntese ({backend}): {str(e)[:200]}")
+            self._send_error(500, f"Falha na síntese ({backend}): {_sanitize_provider_error(e)}")
 
     def _handle_tool_manifest(self):
         tools_root = ROOT / "js" / "tools"
