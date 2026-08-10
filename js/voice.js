@@ -100,5 +100,122 @@
 
   function isRecording () { return !!(recorder && recorder.state === 'recording') }
 
-  window.aris9Voice = { startRecord, stopRecord, speak, stopSpeaking, isRecording }
+  // ── Detecção de silêncio (Voice Activity Detection simples) ──
+  // Grava até o usuário ficar em silêncio por `silenceMs` OU atingir `maxMs`.
+  // onLevel(rms) é chamado ~30x/s para animar o mic.
+  async function startContinuousRecord (opts = {}) {
+    const {
+      silenceMs = 1400,
+      maxMs = 20000,
+      minMs = 800,          // gravação mínima para evitar cortar cedo demais
+      threshold = 0.018,    // limiar de RMS para "está falando"
+      onLevel = null
+    } = opts
+
+    if (isRecording()) await stopRecord().catch(() => {})
+    await startRecord()
+
+    return await new Promise((resolve, reject) => {
+      let audioCtx, analyser, srcNode, rafId
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext
+        audioCtx = new AC()
+        srcNode  = audioCtx.createMediaStreamSource(mediaStream)
+        analyser = audioCtx.createAnalyser()
+        analyser.fftSize = 1024
+        analyser.smoothingTimeConstant = 0.4
+        srcNode.connect(analyser)
+      } catch (err) {
+        // Sem Web Audio disponível → cai para timeout fixo
+        setTimeout(async () => {
+          try { resolve(await stopRecord()) } catch (e) { reject(e) }
+        }, 4000)
+        return
+      }
+
+      const data = new Float32Array(analyser.fftSize)
+      const startTs = performance.now()
+      let lastLoudTs = performance.now()
+      let sawSpeech = false
+
+      const tick = () => {
+        analyser.getFloatTimeDomainData(data)
+        let sum = 0
+        for (let i = 0; i < data.length; i++) sum += data[i] * data[i]
+        const rms = Math.sqrt(sum / data.length)
+        if (onLevel) try { onLevel(rms) } catch {}
+        const now = performance.now()
+        if (rms > threshold) { lastLoudTs = now; sawSpeech = true }
+
+        const silentFor = now - lastLoudTs
+        const totalMs   = now - startTs
+
+        // Só para por silêncio se já ouvimos fala e passou o mínimo
+        const stopBySilence = sawSpeech && silentFor > silenceMs && totalMs > minMs
+        const stopByMax     = totalMs > maxMs
+        const stopByEarly   = !sawSpeech && totalMs > Math.max(3000, silenceMs * 3)
+
+        if (stopBySilence || stopByMax || stopByEarly) {
+          cancelAnimationFrame(rafId)
+          try { audioCtx.close() } catch {}
+          stopRecord().then(text => resolve(sawSpeech ? text : '')).catch(reject)
+          return
+        }
+        rafId = requestAnimationFrame(tick)
+      }
+      rafId = requestAnimationFrame(tick)
+    })
+  }
+
+  // ── Wake word: SpeechRecognition local (sem gastar Whisper) ──
+  // Detecta a palavra em português; ao ouvir, chama onDetected e para.
+  function createWakeWordDetector (word, onDetected, opts = {}) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) throw new Error('Reconhecimento de fala local não suportado neste navegador (use Chrome/Edge).')
+
+    const target = String(word || 'aris').toLowerCase().trim()
+    const lang = opts.lang || 'pt-BR'
+    let recog = null
+    let active = false
+    let restartTimer = null
+
+    function _boot () {
+      recog = new SR()
+      recog.continuous = true
+      recog.interimResults = true
+      recog.lang = lang
+      recog.onresult = (ev) => {
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const raw = String(ev.results[i][0]?.transcript || '').toLowerCase()
+          if (!raw) continue
+          if (raw.includes(target)) {
+            try { onDetected(raw) } catch (err) { console.debug('[wake] callback err', err) }
+          }
+        }
+      }
+      recog.onerror = (e) => {
+        // 'not-allowed' ou 'aborted' — não tenta reiniciar
+        if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') active = false
+      }
+      recog.onend = () => {
+        if (active) {
+          restartTimer = setTimeout(() => { try { recog.start() } catch {} }, 400)
+        }
+      }
+      try { recog.start() } catch { /* já iniciado */ }
+    }
+
+    return {
+      start () { if (active) return; active = true; _boot() },
+      stop  () {
+        active = false
+        clearTimeout(restartTimer)
+        if (recog) { try { recog.stop() } catch {} recog = null }
+      },
+      isActive () { return active },
+      setWord (w) { /* handled at boot only; para trocar, stop() + start() */ }
+    }
+  }
+
+  window.aris9Voice = { startRecord, stopRecord, startContinuousRecord, speak, stopSpeaking, isRecording, createWakeWordDetector }
 })()

@@ -38,7 +38,10 @@
     stream:       true,        // streaming visual (efeito de digitação)
     ttsAuto:      false,       // fala automaticamente as respostas
     ttsVoice:     'nova',      // voz OpenAI TTS
-    ttsSpeed:     1.0
+    ttsSpeed:     1.0,
+    voiceAlwaysListen: false,  // após responder, reabre o mic automaticamente
+    wakeWordEnabled:   false,  // ativa detecção de palavra-gatilho
+    wakeWord:          'aris'  // palavra usada como gatilho
   }
   const prefs = { ...defaults, ..._get(LS.PREFS, {}) }
   function savePrefs () { _set(LS.PREFS, prefs) }

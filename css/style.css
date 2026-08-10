@@ -903,3 +903,30 @@ body.vc-open { overflow: hidden; }
   white-space: pre-wrap; word-break: break-all;
 }
 .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* ── Toggles no header do MODO VOZ ────────────────────────── */
+.vc-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--blue-light); font-size: 11px; letter-spacing: 0.5px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.vc-toggle input {
+  width: 14px; height: 14px;
+  accent-color: var(--blue-main);
+  margin: 0;
+}
+#vc-wake-word {
+  background: var(--bg-panel); color: var(--blue-light);
+  border: 1px solid var(--blue-dim); font-family: inherit; font-size: 11px;
+  padding: 4px 6px; width: 82px;
+}
+#vc-wake-word:focus { outline: none; border-color: var(--blue-main); }
+
+/* No mobile o header pode virar em duas linhas se necessário */
+@media (max-width: 480px) {
+  .vc-header { flex-wrap: wrap; gap: 8px 4px; padding: 8px 10px; }
+  .vc-actions { flex-wrap: wrap; gap: 6px; }
+  #vc-wake-word { width: 70px; }
+  .vc-toggle { font-size: 10px; }
+}
