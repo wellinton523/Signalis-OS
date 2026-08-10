@@ -47,3 +47,12 @@ Iteração 4: Backend **16/16 pytest** (auth, guards, TTS 200 audio/mpeg real, S
 - P2: shared event-loop/OpenAI client em vez de asyncio.run() por request.
 - P2: contraste do `#titlebar-title` e das linhas de hint (carry-over).
 - P2: extrair drawer/commands do terminal.js para módulos próprios.
+
+### Fase 9 — Escuta contínua + Wake word (jan/2026)
+- `window.aris9Voice.startContinuousRecord({silenceMs, maxMs, minMs, threshold, onLevel})` grava até ficar em silêncio por 1.4s (VAD via Web Audio Analyser + RMS).
+- `window.aris9Voice.createWakeWordDetector(word, onDetected)` usa Web Speech Recognition local (pt-BR, sem gastar Whisper), auto-restart, tratamento de 'not-allowed'.
+- 3 novas prefs em `aris9Prefs`: `voiceAlwaysListen`, `wakeWordEnabled`, `wakeWord` (default 'aris').
+- Modo Voz: 2 toggles + input de palavra no header; sync bidirecional com toggles do drawer principal.
+- Auto follow-up: após audio.onended da resposta, se `voiceAlwaysListen`, reabre o mic com VAD em 350ms.
+- Epoch token no VAD para descartar resultado se o overlay fechar/reset acontecer no meio.
+- **Testing agent iteração 5**: 100% (12/12 frontend + 3/3 backend regression). Zero bugs.

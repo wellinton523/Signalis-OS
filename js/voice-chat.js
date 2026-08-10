@@ -10,6 +10,7 @@
   let micBtn   = null
   let statusEl = null
   let busy = false
+  let _vadEpoch = 0
 
   function _build () {
     if (overlay) return overlay
@@ -163,16 +164,24 @@
       if (useVAD) {
         // gravação contínua com auto-stop por silêncio
         busy = true
+        const myEpoch = ++_vadEpoch
         const text = await window.aris9Voice.startContinuousRecord({
           silenceMs: 1400, maxMs: 20000, minMs: 700,
           onLevel: (rms) => _pulseMic(rms)
         })
         micBtn.classList.remove('recording')
+        // Se o overlay foi fechado ou outro turno começou, descarta o resultado
+        if (myEpoch !== _vadEpoch || !overlay.classList.contains('open')) {
+          busy = false
+          return
+        }
         await _handleTranscribedText(text)
         busy = false
         return
       }
+      busy = true
       await window.aris9Voice.startRecord()
+      busy = false
     } catch (err) {
       _setStatus('Falha ao acessar microfone: ' + (err.message || err))
       micBtn.classList.remove('recording')
@@ -286,6 +295,7 @@
   }
   function close () {
     if (!overlay) return
+    _vadEpoch++  // invalida qualquer VAD em curso
     overlay.classList.remove('open')
     document.body.classList.remove('vc-open')
     window.aris9Voice?.stopSpeaking()

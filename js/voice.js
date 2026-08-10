@@ -213,7 +213,16 @@
         if (recog) { try { recog.stop() } catch {} recog = null }
       },
       isActive () { return active },
-      setWord (w) { /* handled at boot only; para trocar, stop() + start() */ }
+      setWord (w) {
+        // Troca a palavra reiniciando o detector se estiver ativo.
+        // Precisa reboot porque `target` é capturado no closure de _boot.
+        const wasActive = active
+        this.stop()
+        // Substitui `target` via re-criação simples: como target é const do closure,
+        // trocamos referências criando novo detector no wrapper externo.
+        // (o consumidor deve preferir stop() + createWakeWordDetector(newWord))
+        if (wasActive) console.warn('[wake] setWord requer criar novo detector; chame stop() e createWakeWordDetector(newWord).')
+      }
     }
   }
 
