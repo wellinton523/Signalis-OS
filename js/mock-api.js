@@ -51,6 +51,20 @@
     // ── Browser ───────────────────────────────────────────────
     browserFetch:   (url, maxChars) => request('/api/browser/fetch',  { method: 'POST', body: { url, maxChars } }),
     browserScrape:  (url, filter)   => request('/api/browser/scrape', { method: 'POST', body: { url, filter } }),
+    networkRequest: (opts)          => request('/api/network/request', { method: 'POST', body: opts }),
+
+    // ── VS Code ──
+    vscodeOpen: (path, line, newWindow) => request('/api/vscode/open', { method: 'POST', body: { path, line, newWindow } }),
+    vscodeDiff: (fileA, fileB)          => request('/api/vscode/diff', { method: 'POST', body: { fileA, fileB } }),
+
+    // ── Git ──
+    gitStatus: repoPath                 => request('/api/git/status', { method: 'POST', body: { repoPath } }),
+    gitDiff:   (repoPath, staged, file) => request('/api/git/diff',   { method: 'POST', body: { repoPath, staged, file } }),
+    gitLog:    (repoPath, limit)        => request('/api/git/log',    { method: 'POST', body: { repoPath, limit } }),
+    gitAdd:    (repoPath, files)        => request('/api/git/add',    { method: 'POST', body: { repoPath, files } }),
+    gitCommit: (repoPath, message)      => request('/api/git/commit', { method: 'POST', body: { repoPath, message } }),
+    gitPush:   (repoPath, remote, branch) => request('/api/git/push', { method: 'POST', body: { repoPath, remote, branch } }),
+    gitBranch: (repoPath, name)         => request('/api/git/branch', { method: 'POST', body: { repoPath, name } }),
 
     // ── Mídia ─────────────────────────────────────────────────
     musicControl:   (action, value) => request('/api/system/music', { method: 'POST', body: { action, value } }),

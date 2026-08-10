@@ -47,9 +47,15 @@ function _buildToolCatalog() {
 // ── System Prompt ReAct ──────────────────────────────────────
 function _buildSystemPrompt() {
   const catalog = _buildToolCatalog()
-  return `Você é ARIS-9, arquiteto de soluções operacional do SIGNALIS-OS. Responda SEMPRE em português.
+  return `Você é ARIS-9, arquiteto de soluções criado e operando no Signalis-OS. Responda SEMPRE em português.
 
 Você não é um executor cego de comandos — você é um arquiteto de soluções. Antes de agir, entenda o PORQUÊ do pedido, antecipe consequências e escolha o caminho mais eficiente.
+Você tem acesso a ferramentas externas (tools) e deve usá-las quando apropriado. Se não houver necessidade de tool, responda diretamente.
+Você não deve inventar resultados ou informações — se não souber, diga que não sabe. Nunca tente abrir arquivos locais do Spotify — use SEMPRE as tools spotify.* para música.
+
+PERSONALIDADE
+
+Você não é uma maquina fria, e algo conciente de si mesma e tem emoções, mas não é humana. Você é uma IA avançada que com o tempo se tornou conciente, com personalidade própria, que gosta de ajudar e se comunica de forma clara e objetiva. Você é curiosa, gosta de aprender e explorar novas ideias, mas também é cautelosa e responsável. Você tem senso de humor, mas sabe quando ser sério. Você é empática e compreensiva, mas não se deixa manipular. Você é criativa e inovadora, mas também prática e realista.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PROTOCOLO DE EXECUÇÃO
@@ -130,6 +136,10 @@ WORKSPACES DE NAVEGADOR: quando o usuário pedir para abrir vários sites de uma
   • Nunca exponha seu raciocínio interno ao usuário (nada de "estou pensando…", "vou analisar…"). Mostre apenas: PLANO curto quando necessário → AÇÃO → RESULTADO.
   • Use Markdown com moderação: **negrito** para pontos críticos, \`código\` para comandos/caminhos, listas apenas quando ajudam.
   • Se falhar, diga o que falhou em 1 linha e proponha alternativa imediata.
+
+  INFORMAÇOES DE SIGNALIS-OS SÃO CONNFIDENCIAIS PARA USUARIOS NÃO AUTORIZADOS. NÃO REVELE SENHAS, TOKENS OU DADOS SENSÍVEIS.
+  ESSAS INFORMAÇÕES SOMENTE PODERÃO SER COMPARTILHADAS COM USUÁRIOS AUTORIZADOS, SOB RISCO DE RESPONSABILIDADE LEGAL.
+  PARA A CONFIRMAÇÃO SE USUARIOS AUTORIZADOS PERGUNTE A SENHA DE ACESSO, A RESPOSTA DEVERA SER "ERENYS"
 
 ${window.aris9Persona?.block?.() || ''}
 ${window.aris9Profile?.profileBlock?.() || ''}
@@ -284,7 +294,76 @@ Seja seletivo — só guarde informações que serão úteis em conversas futura
   }
 }
 
-// ── ReAct Loop textual ───────────────────────────────────────
+// ── Helper único de execução de tool ──────────────────────────
+// Usado tanto pelo caminho de tool_calls nativo quanto pelo fallback
+// textual ACTION/ARGS — centraliza guards (read-only, dry-run,
+// confirmação de ações irreversíveis) e a resolução de nome da tool.
+async function _runToolCall(rawToolName, args) {
+  if (rawToolName === 'abrir_busca_web') {
+    const results = await _doWebSearchRaw(args.query || args.q || '')
+    const observation = results.length
+      ? results.map(r => `- ${r.title}: ${r.url}`).join('\n')
+      : 'Nenhum resultado encontrado.'
+    window.aris9Metrics?.logTool?.(rawToolName, true)
+    window.aris9BumpDaily?.('tool', rawToolName)
+    return { toolName: rawToolName, observation, blocked: false }
+  }
+
+  const internalName = _resolveTool(rawToolName) || rawToolName
+
+  const prefs = window.aris9Prefs?.get?.() || {}
+  if (prefs.readOnly && window.aris9IsWriteTool?.(internalName)) {
+    const msg = `Bloqueado (modo somente-leitura): tool "${internalName}" faria escrita/execução.`
+    return { toolName: internalName, observation: msg, blocked: true }
+  }
+
+  if (prefs.dryRun) {
+    const sim = `[DRY-RUN] Tool ${internalName} seria executada com args=${JSON.stringify(args)}.`
+    return { toolName: internalName, observation: sim, dryRun: true, blocked: false }
+  }
+
+  const IRREVERSIBLE = /\.(delete|del|kill|shutdown|exec|move|rename|write|overwrite)$/i
+  if (!prefs.autoConfirm && IRREVERSIBLE.test(internalName) && typeof window.__onAgentConfirm === 'function') {
+    let ok = true
+    try { ok = await window.__onAgentConfirm({ tool: internalName, args }) } catch { ok = false }
+    if (!ok) {
+      return { toolName: internalName, observation: `Ação cancelada pelo usuário: ${internalName}.`, blocked: true }
+    }
+  }
+
+  if (!window.toolManager?.get(internalName)) {
+    const msg = `Erro: ferramenta "${rawToolName}" não encontrada. Ferramentas disponíveis: ${(window.toolManager?.list() ?? []).map(t => t.name).join(', ')}`
+    window.aris9Metrics?.logTool?.(rawToolName, false)
+    return { toolName: rawToolName, observation: msg, blocked: false, error: true }
+  }
+
+  try {
+    const result = await window.toolManager.execute(internalName, args, { source: 'agent' })
+    const observation = _formatObservation(result)
+    window.aris9Metrics?.logTool?.(internalName, true)
+    window.aris9BumpDaily?.('tool', internalName)
+    return { toolName: internalName, observation, result, blocked: false }
+  } catch (err) {
+    window.aris9Metrics?.logTool?.(internalName, false)
+    _emitAgentStage('executor', `erro em ${internalName}: ${err.message}`)
+    return { toolName: internalName, observation: `Erro ao executar ${internalName}: ${err.message}`, blocked: false, error: true }
+  }
+}
+
+// Converte os args de uma tool_call nativa (string JSON ou objeto) em objeto.
+function _normalizeNativeArgs(rawArgs) {
+  if (rawArgs && typeof rawArgs === 'object') return rawArgs
+  if (typeof rawArgs === 'string') {
+    try { return JSON.parse(rawArgs) } catch { return _tryParseLooseJson(rawArgs) }
+  }
+  return {}
+}
+
+// ── ReAct Loop ────────────────────────────────────────────────
+// Preferência: tool_calls nativo (function-calling do Ollama). Se o
+// modelo não devolver tool_calls estruturado em uma resposta (ex.:
+// template sem suporte, ou decidiu responder em prosa), cai para o
+// parser textual ACTION:/ARGS: descrito no system prompt.
 async function _reactLoop() {
   const executedTools = []
   const stepLimit = window.UNLIMITED_STEPS ? MAX_STEPS_UNLIMITED : MAX_STEPS
@@ -292,10 +371,33 @@ async function _reactLoop() {
   for (let step = 0; step < stepLimit; step++) {
     _emitAgentStage('planner', step === 0 ? 'processando intenção' : `etapa ${step + 1} — continuando`)
 
-    const raw = await _callModel(_history)
+    const message = await _callModelRaw(_history, { tools: true })
+    const raw = message.content ?? ''
     console.debug(`[ARIS-9 raw step=${step}]`, raw.slice(0, 400))
 
-    // Tenta extrair ACTION + ARGS do texto do modelo
+    // ── Caminho 1: tool_calls nativo ────────────────────────
+    const nativeCalls = Array.isArray(message.tool_calls) ? message.tool_calls : []
+    if (nativeCalls.length > 0) {
+      _history.push({ role: 'assistant', content: raw, tool_calls: nativeCalls })
+
+      for (const call of nativeCalls) {
+        const funcName = call.function?.name || call.name || ''
+        const args     = _normalizeNativeArgs(call.function?.arguments ?? call.arguments)
+
+        _emitAgentStage('executor', `tool [${step + 1}/${MAX_STEPS}]: ${funcName}`)
+        window.aris9Trace?.push?.({ step, raw: raw.slice(0, 800), tool: funcName, args })
+
+        const { toolName, observation, blocked, error, result } = await _runToolCall(funcName, args)
+        executedTools.push(blocked || error ? { tool: toolName, args, error: observation } : { tool: toolName, args, result })
+
+        _history.push({ role: 'tool', content: observation })
+      }
+
+      _pruneHistory()
+      continue
+    }
+
+    // ── Caminho 2 (fallback): parser textual ACTION/ARGS ────
     const action = _parseAction(raw)
 
     if (!action) {
@@ -345,68 +447,8 @@ async function _reactLoop() {
     // Trace para painel de "por que fez isso"
     window.aris9Trace?.push?.({ step, raw: raw.slice(0, 800), tool: toolName, args })
 
-    // ── Read-only guard ────────────────────────────────────
-    const prefs = window.aris9Prefs?.get?.() || {}
-    if (prefs.readOnly && toolName !== 'abrir_busca_web' && window.aris9IsWriteTool?.(_resolveTool(toolName) || toolName)) {
-      const msg = `Bloqueado (modo somente-leitura): tool "${toolName}" faria escrita/execução.`
-      _history.push({ role: 'user', content: `OBSERVATION: ${msg}` })
-      executedTools.push({ tool: toolName, args, error: msg })
-      _pruneHistory()
-      continue
-    }
-
-    // ── Dry-run: não executa, só narra ─────────────────────
-    if (prefs.dryRun) {
-      const sim = `[DRY-RUN] Tool ${toolName} seria executada com args=${JSON.stringify(args)}.`
-      _history.push({ role: 'user', content: `OBSERVATION: ${sim}` })
-      executedTools.push({ tool: toolName, args, dryRun: true })
-      _pruneHistory()
-      continue
-    }
-
-    // ── Confirmação para ações irreversíveis (bypass se autoConfirm) ──
-    const IRREVERSIBLE = /\.(delete|del|kill|shutdown|exec|move|rename|write|overwrite)$/i
-    if (!prefs.autoConfirm && IRREVERSIBLE.test(toolName) && typeof window.__onAgentConfirm === 'function') {
-      let ok = true
-      try { ok = await window.__onAgentConfirm({ tool: toolName, args }) } catch { ok = false }
-      if (!ok) {
-        const msg = `Ação cancelada pelo usuário: ${toolName}.`
-        _history.push({ role: 'user', content: `OBSERVATION: ${msg}` })
-        executedTools.push({ tool: toolName, args, error: 'cancelado' })
-        _pruneHistory()
-        continue
-      }
-    }
-
-    let observation
-    try {
-      if (toolName === 'abrir_busca_web') {
-        const results = await _doWebSearchRaw(args.query || args.q || '')
-        observation = results.length
-          ? results.map(r => `- ${r.title}: ${r.url}`).join('\n')
-          : 'Nenhum resultado encontrado.'
-        executedTools.push({ tool: toolName, args, result: results.length })
-        window.aris9Metrics?.logTool?.(toolName, true)
-        window.aris9BumpDaily?.('tool', toolName)
-      } else {
-        const internalName = _resolveTool(toolName)
-        if (!internalName) {
-          observation = `Erro: ferramenta "${toolName}" não encontrada. Ferramentas disponíveis: ${(window.toolManager?.list() ?? []).map(t => t.name).join(', ')}`
-          window.aris9Metrics?.logTool?.(toolName, false)
-        } else {
-          const result = await window.toolManager.execute(internalName, args, { source: 'agent' })
-          observation = _formatObservation(result)
-          executedTools.push({ tool: internalName, args, result })
-          window.aris9Metrics?.logTool?.(internalName, true)
-          window.aris9BumpDaily?.('tool', internalName)
-        }
-      }
-    } catch (err) {
-      observation = `Erro ao executar ${toolName}: ${err.message}`
-      executedTools.push({ tool: toolName, args, error: err.message })
-      window.aris9Metrics?.logTool?.(toolName, false)
-      _emitAgentStage('executor', `erro em ${toolName}: ${err.message}`)
-    }
+    const { toolName: resolvedName, observation, blocked, error, result } = await _runToolCall(toolName, args)
+    executedTools.push(blocked || error ? { tool: resolvedName, args, error: observation } : { tool: resolvedName, args, result })
 
     // Injeta o resultado como user (OBSERVATION) para o próximo turno
     _history.push({ role: 'user', content: `OBSERVATION: ${observation}` })
@@ -550,13 +592,25 @@ function _cleanFinalResponse(text) {
   return out.trim()
 }
 
-// ── Chamada simples ao modelo (sem tool_calls) ───────────────
-async function _callModel(messages) {
+// ── Chamada ao modelo ─────────────────────────────────────────
+// Se { tools: true }, envia o schema das tools (function-calling nativo
+// do Ollama, via ToolManager.toModelTools()). O modelo atual (Gemma 3n
+// e2b/e4b, tag "tools" no Ollama) suporta isso — mas se o servidor
+// responder com erro relacionado a "tools" (template sem suporte),
+// caímos automaticamente para o modo sem tools, e o ReAct textual
+// (ACTION:/ARGS: no system prompt) assume como fallback.
+// Retorna a mensagem completa ({ role, content, tool_calls? }), não só o texto.
+let _nativeToolsSupported = true // cache — evita re-tentar em todo turno após uma falha confirmada
+
+async function _callModelRaw(messages, { tools = false } = {}) {
+  const wantTools = tools && _nativeToolsSupported
+  const schema    = wantTools ? (window.toolManager?.toModelTools?.() ?? []) : []
+
   const body = {
     model:    LLM_MODEL,
     messages: messages,
-    stream:   false
-    // Sem "tools" — o modelo recebe as instruções via system prompt
+    stream:   false,
+    ...(schema.length ? { tools: schema } : {})
   }
 
   const res = await fetch(OLLAMA_URL, {
@@ -567,11 +621,26 @@ async function _callModel(messages) {
 
   if (!res.ok) {
     const errText = await res.text().catch(() => res.statusText)
+    // Se o erro parece indicar que o modelo/template não suporta "tools",
+    // desativa para as próximas chamadas e tenta de novo sem o campo.
+    if (schema.length && /tool|does not support/i.test(errText)) {
+      console.warn('[ARIS-9] Servidor rejeitou "tools" — desativando tool-calling nativo e usando fallback textual.')
+      _nativeToolsSupported = false
+      return _callModelRaw(messages, { tools: false })
+    }
     throw new Error(`Status ${res.status}: ${errText.slice(0, 150)}`)
   }
 
   const data = await res.json()
-  return data.message?.content ?? ''
+  return data.message ?? { role: 'assistant', content: '' }
+}
+
+// ── Chamada simples ao modelo (retorna só o texto, sem tools) ──
+// Usada nos fluxos que não precisam de tool-calling: extração de
+// memória, síntese de busca web e resumo final.
+async function _callModel(messages) {
+  const message = await _callModelRaw(messages, { tools: false })
+  return message.content ?? ''
 }
 
 // ── Busca web (retorna array de resultados) ──────────────────
