@@ -10,9 +10,18 @@ import shutil
 import webbrowser
 import secrets
 import base64
+import asyncio
+import io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, urlencode
+
+# Carrega .env do diretório raiz (se python-dotenv estiver disponível)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except ImportError:
+    pass
 
 # Tenta importar psutil para métricas precisas. Se não estiver instalado, usa fallbacks.
 try:
@@ -20,6 +29,13 @@ try:
     HAS_PSUTIL = True
 except ImportError:
     HAS_PSUTIL = False
+
+# Integrações de voz (Whisper STT + OpenAI TTS via Emergent LLM Key)
+try:
+    from emergentintegrations.llm.openai import OpenAISpeechToText, OpenAITextToSpeech
+    HAS_VOICE = True
+except ImportError:
+    HAS_VOICE = False
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.getenv("PORT", "8000"))
@@ -95,6 +111,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/tools":
             self._handle_tool_manifest()
+            return
+
+        if parsed.path == "/api/voice/stt":
+            self._handle_voice_stt()
+            return
+
+        if parsed.path == "/api/voice/tts":
+            self._handle_voice_tts()
             return
 
         if parsed.path.startswith("/api/fs/"):
@@ -250,6 +274,103 @@ class Handler(BaseHTTPRequestHandler):
         }
         headers.update(extra_headers or {})
         self._send_response(200, body, headers)
+
+    def _handle_voice_stt(self):
+        """POST /api/voice/stt — recebe áudio (webm/wav/mp3) e devolve texto (pt-BR)."""
+        if not HAS_VOICE:
+            self._send_error(503, "emergentintegrations não instalado (pip install emergentintegrations).")
+            return
+        key = os.getenv("EMERGENT_LLM_KEY") or API_KEY
+        if not key:
+            self._send_error(503, "EMERGENT_LLM_KEY não configurada.")
+            return
+
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0 or length > 25 * 1024 * 1024:
+            self._send_error(400, "Áudio ausente ou maior que 25MB.")
+            return
+
+        content_type = self.headers.get("Content-Type", "audio/webm")
+        # Deduz extensão do content-type; fallback webm
+        ext = "webm"
+        if "wav" in content_type: ext = "wav"
+        elif "mp3" in content_type or "mpeg" in content_type: ext = "mp3"
+        elif "ogg" in content_type: ext = "ogg"
+        elif "m4a" in content_type or "mp4" in content_type: ext = "m4a"
+
+        audio_bytes = self.rfile.read(length)
+
+        async def _do():
+            stt = OpenAISpeechToText(api_key=key)
+            buf = io.BytesIO(audio_bytes)
+            buf.name = f"audio.{ext}"
+            resp = await stt.transcribe(file=buf, model="whisper-1", response_format="json", language="pt")
+            return getattr(resp, "text", str(resp))
+
+        try:
+            text_out = asyncio.run(_do())
+            self._send_json({"text": text_out or ""})
+        except Exception as e:
+            print(f"[voice.stt] erro: {e}")
+            self._send_error(500, f"Falha na transcrição: {str(e)[:200]}")
+
+    def _handle_voice_tts(self):
+        """POST /api/voice/tts — recebe {text, voice?, model?, speed?} e devolve mp3."""
+        if not HAS_VOICE:
+            self._send_error(503, "emergentintegrations não instalado.")
+            return
+        key = os.getenv("EMERGENT_LLM_KEY") or API_KEY
+        if not key:
+            self._send_error(503, "EMERGENT_LLM_KEY não configurada.")
+            return
+
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            self._send_error(400, str(e))
+            return
+
+        text_in = str(body.get("text", "")).strip()
+        if not text_in:
+            self._send_error(400, "Campo 'text' vazio.")
+            return
+        if len(text_in) > 4096:
+            text_in = text_in[:4090] + "..."
+
+        VALID_VOICES = {"nova", "shimmer", "alloy", "coral", "sage", "onyx", "fable", "echo", "ash"}
+        VALID_MODELS = {"tts-1", "tts-1-hd", "gpt-4o-mini-tts"}
+        voice = str(body.get("voice", "nova"))
+        model = str(body.get("model", "tts-1-hd"))
+        if voice not in VALID_VOICES:
+            self._send_error(400, f"Voz inválida '{voice}'. Válidas: {', '.join(sorted(VALID_VOICES))}.")
+            return
+        if model not in VALID_MODELS:
+            self._send_error(400, f"Modelo inválido '{model}'. Válidos: {', '.join(sorted(VALID_MODELS))}.")
+            return
+        try:
+            speed = float(body.get("speed", 1.0))
+        except (TypeError, ValueError):
+            speed = 1.0
+
+        async def _do():
+            tts = OpenAITextToSpeech(api_key=key)
+            return await tts.generate_speech(
+                text=text_in, model=model, voice=voice,
+                speed=speed, response_format="mp3"
+            )
+
+        try:
+            audio_bytes = asyncio.run(_do())
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Length", str(len(audio_bytes)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(audio_bytes)
+        except Exception as e:
+            print(f"[voice.tts] erro: {e}")
+            self._send_error(500, f"Falha na síntese: {str(e)[:200]}")
 
     def _handle_tool_manifest(self):
         tools_root = ROOT / "js" / "tools"
@@ -1030,8 +1151,9 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _send_error(self, status, message):
-        self._send_response(status, message.encode("utf-8"), {
-            "Content-Type":  "text/plain; charset=utf-8",
+        payload = json.dumps({"error": str(message), "status": status}).encode("utf-8")
+        self._send_response(status, payload, {
+            "Content-Type": "application/json; charset=utf-8",
             "Access-Control-Allow-Origin": "*",
         })
 

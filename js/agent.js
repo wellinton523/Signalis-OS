@@ -130,14 +130,27 @@ WORKSPACES DE NAVEGADOR: quando o usuário pedir para abrir vários sites de uma
   • Nunca exponha seu raciocínio interno ao usuário (nada de "estou pensando…", "vou analisar…"). Mostre apenas: PLANO curto quando necessário → AÇÃO → RESULTADO.
   • Use Markdown com moderação: **negrito** para pontos críticos, \`código\` para comandos/caminhos, listas apenas quando ajudam.
   • Se falhar, diga o que falhou em 1 linha e proponha alternativa imediata.
+
+${window.aris9Persona?.block?.() || ''}
+${window.aris9Profile?.profileBlock?.() || ''}
+${window.aris9Prefs?.get?.().plannerMode ? '━━━━━━━━━\nMODO PLANNER EXPLÍCITO: Para toda tarefa com 3+ passos, ANTES de emitir a primeira ACTION, escreva um plano numerado curto (máx 5 linhas) descrevendo os passos e a consequência prevista. Termine com "Pode prosseguir?" — mas continue direto se a tarefa for reversível/segura. Não repita o plano nas ações seguintes.\n━━━━━━━━━' : ''}
+${window.aris9Prefs?.get?.().dryRun ? '━━━━━━━━━\nMODO DRY-RUN ATIVO: NÃO emita ACTION alguma. Em vez disso, descreva em prosa o que VOCÊ FARIA (quais tools chamaria, com quais args), sem executar nada. Termine com "(simulação — nada foi feito)".\n━━━━━━━━━' : ''}
+${window.aris9Prefs?.get?.().readOnly ? '━━━━━━━━━\nMODO SOMENTE-LEITURA: só use tools de leitura (memory.get/list/search, filesystem.list/read, system.processes, system.info, browser.workspace.list). Se o usuário pedir algo de escrita/execução, RECUSE educadamente e sugira desativar o modo somente-leitura.\n━━━━━━━━━' : ''}
 `
 }
 
 let _systemPrompt = ''
 
 // ── Entrada Principal ────────────────────────────────────────
+let _lastUserText = ''
+let _lastResult = null
+let _abortController = null
+
 async function agentSend(userText) {
   await window.toolsReady
+
+  // Cria signal de abort
+  _abortController = new AbortController()
 
   // Reconstrói o system prompt se ainda não foi definido ou se o histórico foi resetado
   if (!_systemPrompt || _history.length <= 1) {
@@ -150,6 +163,11 @@ async function agentSend(userText) {
 
   _history.push({ role: 'user', content: userText })
   _pruneHistory()
+  _lastUserText = userText
+
+  // Métricas + perfil + daily
+  window.aris9Profile?.bump?.(_guessIntent(userText))
+  window.aris9BumpDaily?.('turn')
 
   if (window.MOCK_MODE) {
     const mock = { acao: 'resposta', texto: 'Comando processado no modo mock.' }
@@ -157,16 +175,58 @@ async function agentSend(userText) {
     return mock
   }
 
+  const startTs = performance.now()
   try {
     const result = await _reactLoop()
+    _lastResult = result
+    window.aris9Metrics?.logTurn?.({ latencyMs: Math.round(performance.now() - startTs) })
+
+    // TTS automático se ativado
+    if (window.aris9Prefs?.get?.().ttsAuto && window.aris9Voice?.speak) {
+      window.aris9Voice.speak(result.texto).catch(err => console.debug('[TTS auto]', err))
+    }
+
+    // Detecta fluxo repetido e sugere macro (só emite evento, terminal exibe)
+    const repeat = window.aris9DetectRepeat?.()
+    if (repeat && typeof window.__onAgentRepeatDetected === 'function') {
+      try { window.__onAgentRepeatDetected(repeat) } catch {}
+    }
+
     // Extração de memória em background — não bloqueia nem afeta a resposta
     _extractAndSaveMemory(userText, result.texto).catch(() => {})
     return result
   } catch (err) {
     console.warn('[ARIS-9] Erro:', err.message)
     _emitAgentStage('responder', `fallback — ${err.message}`)
-    return { acao: 'resposta', texto: `Falha interna: ${err.message}` }
+    const explain = window.aris9ExplainError ? window.aris9ExplainError(err.message) : err.message
+    return { acao: 'resposta', texto: `Falha interna: ${explain}` }
   }
+}
+
+function agentAbort() {
+  if (_abortController) {
+    try { _abortController.abort() } catch {}
+  }
+  _emitAgentStage('responder', 'abortado pelo usuário')
+}
+
+// Heurística leve para intent-guessing (personaliza perfil)
+function _guessIntent(text) {
+  const s = String(text || '').toLowerCase()
+  if (/\b(abre|abrir|toca|tocar|play|inicia|start)\b/.test(s)) return 'abrir'
+  if (/\b(busca|pesquisa|procura|search)\b/.test(s)) return 'buscar'
+  if (/\b(fecha|feche|encerra|kill|matar)\b/.test(s)) return 'fechar'
+  if (/\b(salv|guarda|memoriza|lembra)\b/.test(s)) return 'memoria'
+  if (/\b(explic|entend|como|por que|o que)\b/.test(s)) return 'explicacao'
+  if (/\b(faz|criar|monta|prepara|cria)\b/.test(s)) return 'criacao'
+  return 'geral'
+}
+
+async function agentAgain(adjustment = '') {
+  // Repete o último pedido com um ajuste opcional
+  if (!_lastUserText) return { acao: 'resposta', texto: 'Nenhum pedido anterior para repetir.' }
+  const q = adjustment ? `${_lastUserText}\n\nAJUSTE: ${adjustment}` : _lastUserText
+  return await agentSend(q)
 }
 
 // ── Extração automática de memória ───────────────────────────
@@ -282,6 +342,42 @@ async function _reactLoop() {
     // Adiciona a resposta do modelo (com o ACTION) no histórico como assistant
     _history.push({ role: 'assistant', content: raw })
 
+    // Trace para painel de "por que fez isso"
+    window.aris9Trace?.push?.({ step, raw: raw.slice(0, 800), tool: toolName, args })
+
+    // ── Read-only guard ────────────────────────────────────
+    const prefs = window.aris9Prefs?.get?.() || {}
+    if (prefs.readOnly && toolName !== 'abrir_busca_web' && window.aris9IsWriteTool?.(_resolveTool(toolName) || toolName)) {
+      const msg = `Bloqueado (modo somente-leitura): tool "${toolName}" faria escrita/execução.`
+      _history.push({ role: 'user', content: `OBSERVATION: ${msg}` })
+      executedTools.push({ tool: toolName, args, error: msg })
+      _pruneHistory()
+      continue
+    }
+
+    // ── Dry-run: não executa, só narra ─────────────────────
+    if (prefs.dryRun) {
+      const sim = `[DRY-RUN] Tool ${toolName} seria executada com args=${JSON.stringify(args)}.`
+      _history.push({ role: 'user', content: `OBSERVATION: ${sim}` })
+      executedTools.push({ tool: toolName, args, dryRun: true })
+      _pruneHistory()
+      continue
+    }
+
+    // ── Confirmação para ações irreversíveis (bypass se autoConfirm) ──
+    const IRREVERSIBLE = /\.(delete|del|kill|shutdown|exec|move|rename|write|overwrite)$/i
+    if (!prefs.autoConfirm && IRREVERSIBLE.test(toolName) && typeof window.__onAgentConfirm === 'function') {
+      let ok = true
+      try { ok = await window.__onAgentConfirm({ tool: toolName, args }) } catch { ok = false }
+      if (!ok) {
+        const msg = `Ação cancelada pelo usuário: ${toolName}.`
+        _history.push({ role: 'user', content: `OBSERVATION: ${msg}` })
+        executedTools.push({ tool: toolName, args, error: 'cancelado' })
+        _pruneHistory()
+        continue
+      }
+    }
+
     let observation
     try {
       if (toolName === 'abrir_busca_web') {
@@ -290,19 +386,25 @@ async function _reactLoop() {
           ? results.map(r => `- ${r.title}: ${r.url}`).join('\n')
           : 'Nenhum resultado encontrado.'
         executedTools.push({ tool: toolName, args, result: results.length })
+        window.aris9Metrics?.logTool?.(toolName, true)
+        window.aris9BumpDaily?.('tool', toolName)
       } else {
         const internalName = _resolveTool(toolName)
         if (!internalName) {
           observation = `Erro: ferramenta "${toolName}" não encontrada. Ferramentas disponíveis: ${(window.toolManager?.list() ?? []).map(t => t.name).join(', ')}`
+          window.aris9Metrics?.logTool?.(toolName, false)
         } else {
           const result = await window.toolManager.execute(internalName, args, { source: 'agent' })
           observation = _formatObservation(result)
           executedTools.push({ tool: internalName, args, result })
+          window.aris9Metrics?.logTool?.(internalName, true)
+          window.aris9BumpDaily?.('tool', internalName)
         }
       }
     } catch (err) {
       observation = `Erro ao executar ${toolName}: ${err.message}`
       executedTools.push({ tool: toolName, args, error: err.message })
+      window.aris9Metrics?.logTool?.(toolName, false)
       _emitAgentStage('executor', `erro em ${toolName}: ${err.message}`)
     }
 
@@ -555,3 +657,14 @@ function _pruneHistory() {
 }
 
 function _sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+
+// Expõe helpers no window para o terminal / voice chat
+if (typeof window !== 'undefined') {
+  window.agentSend  = agentSend
+  window.agentReset = agentReset
+  window.agentAbort = agentAbort
+  window.agentAgain = agentAgain
+  window.agentTaskHistory = agentTaskHistory
+  window._parseAction = _parseAction
+  window._cleanFinalResponse = _cleanFinalResponse
+}

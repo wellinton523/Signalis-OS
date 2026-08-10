@@ -37,6 +37,9 @@
     </form>
   </div>
 
+  <!-- ── BADGES DE STATUS (READ-ONLY / DRY-RUN) ────────── -->
+  <div id="status-badges" aria-live="polite"></div>
+
   <!-- ── BARRA DE TÍTULO ──────────────────────────────────── -->
   <div id="titlebar">
     <button id="mobile-menu-btn" data-testid="mobile-menu-btn" class="win-ctrl" aria-label="Abrir menu" aria-controls="mobile-drawer" aria-expanded="false" title="Menu" onclick="window.toggleMobileDrawer && window.toggleMobileDrawer()">☰</button>
@@ -60,6 +63,9 @@
       <button class="drawer-btn" data-drawer-action="sysmon" data-testid="drawer-btn-sysmon">[ MONITOR DE SISTEMA ]</button>
       <button class="drawer-btn" data-drawer-action="workspaces" data-testid="drawer-btn-workspaces">[ WORKSPACES ]</button>
       <button class="drawer-btn" data-drawer-action="macros" data-testid="drawer-btn-macros">[ MACROS ]</button>
+      <button class="drawer-btn" data-drawer-action="voice" data-testid="drawer-btn-voice">[ MODO VOZ ]</button>
+      <button class="drawer-btn" data-drawer-action="metrics" data-testid="drawer-btn-metrics">[ MÉTRICAS ]</button>
+      <button class="drawer-btn" data-drawer-action="daily" data-testid="drawer-btn-daily">[ RESUMO DO DIA ]</button>
       <button class="drawer-btn" data-drawer-action="wallpaper" data-testid="drawer-btn-wallpaper">[ WALLPAPER ON/OFF ]</button>
     </nav>
     <section class="drawer-section">
@@ -67,6 +73,27 @@
       <label class="drawer-toggle"><input type="checkbox" data-pref="inApp" data-testid="pref-inApp"  checked> Toast in-app</label>
       <label class="drawer-toggle"><input type="checkbox" data-pref="native" data-testid="pref-native" checked> Notificação do sistema</label>
       <label class="drawer-toggle"><input type="checkbox" data-pref="sound" data-testid="pref-sound"  checked> Som ao receber resposta</label>
+    </section>
+    <section class="drawer-section" data-testid="drawer-modes">
+      <h3>MODOS</h3>
+      <label class="drawer-toggle"><input type="checkbox" data-mode="readOnly" data-testid="mode-readonly"> Modo somente-leitura</label>
+      <label class="drawer-toggle"><input type="checkbox" data-mode="dryRun"   data-testid="mode-dryrun"> Modo dry-run (simular)</label>
+      <label class="drawer-toggle"><input type="checkbox" data-mode="autoConfirm" data-testid="mode-autoconfirm"> Pular confirmações</label>
+      <label class="drawer-toggle"><input type="checkbox" data-mode="plannerMode" data-testid="mode-planner"> Planejamento explícito</label>
+      <label class="drawer-toggle"><input type="checkbox" data-mode="selfEval" data-testid="mode-selfeval"> Auto-avaliação</label>
+      <label class="drawer-toggle"><input type="checkbox" data-mode="stream" data-testid="mode-stream"> Efeito de digitação</label>
+      <label class="drawer-toggle"><input type="checkbox" data-mode="ttsAuto" data-testid="mode-ttsauto"> Ler respostas em voz</label>
+      <label class="drawer-toggle"><input type="checkbox" data-mode="voiceAlwaysListen" data-testid="mode-always"> Modo voz: escutar sempre</label>
+      <label class="drawer-toggle"><input type="checkbox" data-mode="wakeWordEnabled" data-testid="mode-wake"> Modo voz: ativar por wake word</label>
+    </section>
+    <section class="drawer-section">
+      <h3>PERSONA</h3>
+      <select id="drawer-persona" data-testid="persona-select">
+        <option value="minimal">mínima — 1 frase</option>
+        <option value="padrao">padrão — SIGNALIS</option>
+        <option value="detalhado">detalhado — explica</option>
+        <option value="brincalhao">brincalhão — leve</option>
+      </select>
     </section>
     <footer class="drawer-footer">
       <span id="drawer-perm">nível: —</span>
@@ -149,6 +176,9 @@
   <!-- 1. mock-api.js PRIMEIRO — cria window.api antes de tudo -->
   <script src="js/mock-api.js"></script>
   <script src="js/notifications.js"></script>
+  <script src="js/aris9-enhancements.js"></script>
+  <script src="js/voice.js"></script>
+  <script src="js/voice-chat.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/windowManager.js"></script>
   <script src="js/core/permissions.js"></script>
@@ -266,9 +296,66 @@
             case 'wallpaper':  if (typeof toggleWallpaper === 'function') toggleWallpaper(); break
             case 'workspaces': _quickList('browser.workspace.list', 'WORKSPACES', 'name', 'description'); break
             case 'macros':     _quickList('macro.list',              'MACROS',     'name', 'trigger');     break
+            case 'voice':      if (typeof window.openVoiceChat === 'function') window.openVoiceChat();     break
+            case 'metrics':    _showMetrics(); break
+            case 'daily':      _showDaily();   break
           }
         })
       })
+
+      // Modos (checkboxes) → aris9Prefs
+      drawer.querySelectorAll('input[data-mode]').forEach(chk => {
+        const key = chk.dataset.mode
+        chk.addEventListener('change', () => {
+          window.aris9Prefs?.set(key, chk.checked)
+          _renderStatusBadges()
+        })
+      })
+
+      // Persona
+      const personaSel = drawer.querySelector('#drawer-persona')
+      if (personaSel) {
+        personaSel.addEventListener('change', () => {
+          window.aris9Prefs?.set('persona', personaSel.value)
+          if (typeof agentReset === 'function') agentReset()
+        })
+      }
+
+      function _showMetrics () {
+        if (typeof openTerminal === 'function') openTerminal()
+        const m = window.aris9Metrics?.get?.() || {}
+        const out = document.querySelector('.terminal-output')
+        if (!out) return
+        const line = (h) => { const d = document.createElement('div'); d.innerHTML = h; out.appendChild(d) }
+        line('<span class="t-dim">── MÉTRICAS DO ARIS-9 ────────────────</span>')
+        line(`  <span class="t-aris">turnos</span>: ${m.turns || 0}`)
+        line(`  <span class="t-aris">tools executadas</span>: ${m.toolsExec || 0}`)
+        line(`  <span class="t-aris">erros</span>: ${m.errors || 0}`)
+        line(`  <span class="t-aris">latência média</span>: ${Math.round(m.avgLatencyMs || 0)} ms`)
+        const top = Object.entries(m.byTool || {}).sort((a,b)=>b[1]-a[1]).slice(0,8)
+        if (top.length) {
+          line('<span class="t-dim">  tools mais usadas:</span>')
+          top.forEach(([n,c]) => line(`    ${n} — ${c}x`))
+        }
+        out.scrollTop = out.scrollHeight
+      }
+      function _showDaily () {
+        if (typeof openTerminal === 'function') openTerminal()
+        const d = window.aris9DailySummary?.() || {}
+        const out = document.querySelector('.terminal-output')
+        if (!out) return
+        const line = (h) => { const el = document.createElement('div'); el.innerHTML = h; out.appendChild(el) }
+        line(`<span class="t-dim">── RESUMO DO DIA (${d.today || '?'}) ─────────────</span>`)
+        line(`  turnos: ${d.turns || 0} — macros disparadas: ${d.macrosRun || 0}`)
+        const tools = Object.entries(d.tools || {}).sort((a,b)=>b[1]-a[1]).slice(0,5)
+        if (tools.length) {
+          line('<span class="t-dim">  tools do dia:</span>')
+          tools.forEach(([n,c]) => line(`    ${n} — ${c}x`))
+        } else {
+          line('<span class="t-dim">  ainda sem ações hoje.</span>')
+        }
+        out.scrollTop = out.scrollHeight
+      }
 
       // Preferências de notificação
       drawer.querySelectorAll('input[data-pref]').forEach(chk => {
@@ -291,13 +378,23 @@
       })
 
       async function _refreshDrawerState() {
-        // sincroniza checkboxes com preferências atuais
+        // sincroniza checkboxes de notificação
         if (typeof window.getNotificationPrefs === 'function') {
           const prefs = window.getNotificationPrefs()
           drawer.querySelectorAll('input[data-pref]').forEach(chk => {
             const key = chk.dataset.pref
             if (key in prefs) chk.checked = !!prefs[key]
           })
+        }
+        // sincroniza checkboxes de modo
+        if (window.aris9Prefs) {
+          const p = window.aris9Prefs.get()
+          drawer.querySelectorAll('input[data-mode]').forEach(chk => {
+            const k = chk.dataset.mode
+            if (k in p) chk.checked = !!p[k]
+          })
+          const ps = drawer.querySelector('#drawer-persona')
+          if (ps) ps.value = p.persona || 'padrao'
         }
         // nível de permissão
         try {
@@ -306,6 +403,17 @@
           if (el && perm) el.textContent = `nível: ${perm}`
         } catch { /* ignora */ }
       }
+
+      function _renderStatusBadges() {
+        const el = document.getElementById('status-badges')
+        if (!el || !window.aris9Prefs) return
+        const p = window.aris9Prefs.get()
+        el.innerHTML = ''
+        if (p.readOnly) el.innerHTML += '<span class="status-badge readonly" data-testid="badge-readonly">READ-ONLY</span>'
+        if (p.dryRun)   el.innerHTML += '<span class="status-badge dryrun"   data-testid="badge-dryrun">DRY-RUN</span>'
+      }
+      _renderStatusBadges()
+      window.addEventListener('aris9:pref-changed', _renderStatusBadges)
 
       async function _quickList(toolName, title, primaryKey, secondaryKey) {
         // Abre o terminal (se necessário) e imprime a listagem

@@ -12,12 +12,43 @@ let _termInput      = null
 let _termPrefix     = null
 let _currentDir     = ''
 let _terminalBusy   = false
+let _typingAbort    = false
+let _abortBtn       = null
 
 // Controle do temporizador de shutdown
 let _shutdownTimer    = null
 let _shutdownCountdown = 0
 
 if (typeof window !== 'undefined') {
+  // Confirmação de ações irreversíveis (respeita autoConfirm nas prefs)
+  window.__onAgentConfirm = async ({ tool, args }) => {
+    return await new Promise(resolve => {
+      const overlay = document.createElement('div')
+      overlay.className = 'confirm-overlay'
+      overlay.setAttribute('data-testid', 'action-confirm')
+      overlay.innerHTML = `
+        <div class="confirm-card">
+          <h3>Confirmar ação</h3>
+          <p>ARIS-9 quer executar <code>${_escHtmlSafe(tool)}</code></p>
+          <pre>${_escHtmlSafe(JSON.stringify(args || {}, null, 2)).slice(0, 500)}</pre>
+          <div class="confirm-actions">
+            <button data-testid="confirm-no"  class="vc-secondary">Cancelar</button>
+            <button data-testid="confirm-yes" class="vc-secondary" style="border-color: var(--red-alert); color:#ff9090;">Executar</button>
+          </div>
+        </div>`
+      document.body.appendChild(overlay)
+      overlay.querySelector('[data-testid=confirm-no]').addEventListener('click', () => { overlay.remove(); resolve(false) })
+      overlay.querySelector('[data-testid=confirm-yes]').addEventListener('click', () => { overlay.remove(); resolve(true) })
+    })
+  }
+
+  // Sugestão de macro após detectar 3 turnos com mesmas tools
+  window.__onAgentRepeatDetected = (info) => {
+    if (!_termOutput) return
+    const tools = (info.tools || []).join(', ')
+    _appendLine(`<span class="t-warn">[ARIS-9] Detectei que você fez isso ${info.count}x seguidas (${escHtml(tools)}). Rode <code>.macro savelast &lt;nome&gt; &lt;trigger&gt;</code> para transformar em fluxo salvo.</span>`)
+  }
+
   window.__onAgentStage = ({ stage, detail }) => {
     if (!_termOutput) return
     const label = String(stage || 'agent').toLowerCase()
@@ -133,13 +164,15 @@ async function _onSubmit(raw) {
     }
     _terminalBusy = true
     _termInput.disabled = true
-    
+    _showAbortButton(true)
+
     await agentSend(text)
       .then(action => _handleAgentAction(action))
       .catch(err   => _appendLine(`<span class="t-error">[FALHA] ${escHtml(err)}</span>`))
       .finally(() => {
         _terminalBusy = false
         _termInput.disabled = false
+        _showAbortButton(false)
         _termInput.focus()
       })
   }
@@ -198,6 +231,16 @@ async function _runDirect(cmdRaw) {
     case 'tools':    _cmdTools(args);           break
     case 'clip':     await _cmdClip(args);      break
     case 'macro':    await _cmdMacro(args);    break
+    case 'again':    await _cmdAgain(args, cmdRaw); break
+    case 'undo':     await _cmdUndo(args); break
+    case 'metrics':  _cmdMetrics(); break
+    case 'trace':    _cmdTrace(); break
+    case 'persona':  _cmdPersona(args); break
+    case 'mode':     _cmdMode(args); break
+    case 'schedule': await _cmdSchedule(args); break
+    case 'install':  await _cmdInstall(args); break
+    case 'undo-list': _cmdUndoList(); break
+    case 'voice':    if (typeof window.openVoiceChat === 'function') window.openVoiceChat(); break
     case 'ws':
     case 'workspace': await _cmdWorkspace(args); break
     case 'reset':
@@ -253,6 +296,17 @@ function _cmdHelp() {
     '  .ws open &lt;nome&gt;                  abre todas as URLs do workspace',
     '  .ws save &lt;nome&gt; &lt;url1&gt; &lt;url2&gt;... salva um workspace',
     '  .ws del &lt;nome&gt;                   remove um workspace',
+    '<span class="t-dim">── AGENTE / MODOS ─────────────────────────────</span>',
+    '  .persona &lt;minimal|padrao|detalhado|brincalhao&gt;  troca o estilo do ARIS-9',
+    '  .mode &lt;chave&gt; on|off             chaves: readonly, dryrun, autoconfirm, planner, selfeval, stream, tts, silent',
+    '  .metrics                         mostra métricas de uso do agente',
+    '  .trace                           mostra últimos passos ReAct executados',
+    '  .again [ajuste]                  repete o último pedido (opcional: ajuste)',
+    '  .undo                            desfaz a última ação reversível',
+    '  .undo-list                       lista a pilha de undo',
+    '  .schedule list|add &lt;HH:MM&gt; &lt;macro&gt;|del &lt;id&gt;  agenda macros',
+    '  .install &lt;url-do-tool.js&gt;        instala uma tool remota',
+    '  .voice                           abre o modo de conversa por voz',
     '<span class="t-dim">── OUTROS ──────────────────────────────────────</span>',
     '  .reset                           limpa memória de sessão do ARIS-9',
   ]
@@ -714,9 +768,27 @@ async function _typeLine(text, cssClass = '') {
   if (cssClass) div.className = `t-${cssClass}`
   _termOutput.appendChild(div)
 
+  const useStream = window.aris9Prefs?.get?.().stream !== false
   const formattedHtml = _parseMarkdown(escHtml(text))
+  if (!useStream || text.length < 20) {
+    div.innerHTML = formattedHtml
+    _termOutput.scrollTop = _termOutput.scrollHeight
+    return
+  }
+  // Streaming visual: revela o texto plano char-a-char, depois aplica markdown
+  const chars = String(text).split('')
+  const step = Math.max(1, Math.floor(chars.length / 80)) // ~80 frames
+  const delay = 12
+  let i = 0
+  while (i < chars.length) {
+    if (_typingAbort) { div.innerHTML = formattedHtml; break }
+    i = Math.min(chars.length, i + step)
+    div.textContent = chars.slice(0, i).join('')
+    _termOutput.scrollTop = _termOutput.scrollHeight
+    await new Promise(r => setTimeout(r, delay))
+  }
   div.innerHTML = formattedHtml
-  _termOutput.scrollTop = _termOutput.scrollHeight
+  _typingAbort = false
 }
 
 function _updatePrefix() {
@@ -727,6 +799,8 @@ function _updatePrefix() {
 }
 
 function _sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+
+function _escHtmlSafe(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
 
 function escHtml(str) {
   return String(str)
@@ -1172,3 +1246,133 @@ async function _cmdWorkspace(args) {
   _appendLine('<span class="t-error">Uso: .ws [list|show|open|save|del] ...</span>')
 }
 
+
+
+// ── Abort button e comandos avançados ───────────────────────
+function _showAbortButton(show) {
+  if (show) {
+    if (_abortBtn) return
+    _abortBtn = document.createElement('button')
+    _abortBtn.className = 'vc-secondary'
+    _abortBtn.setAttribute('data-testid', 'abort-btn')
+    _abortBtn.style.cssText = 'position:fixed;bottom:120px;right:12px;z-index:9500;'
+    _abortBtn.textContent = 'ABORTAR'
+    _abortBtn.addEventListener('click', () => {
+      _typingAbort = true
+      if (typeof window.agentAbort === 'function') window.agentAbort()
+      _appendLine('<span class="t-warn">[abort] solicitado pelo usuário</span>')
+    })
+    document.body.appendChild(_abortBtn)
+  } else if (_abortBtn) {
+    _abortBtn.remove()
+    _abortBtn = null
+  }
+}
+
+async function _cmdAgain(args, raw) {
+  // .again [ajuste livre]
+  const adjustment = raw.slice(6).trim()
+  const r = await window.agentAgain(adjustment)
+  if (r && r.texto) _typeLine(r.texto, 'aris')
+}
+
+function _cmdMetrics() {
+  const m = window.aris9Metrics?.get?.() || {}
+  _appendLine('<span class="t-dim">── MÉTRICAS ARIS-9 ────────────────────────</span>')
+  _appendLine(`  turnos: ${m.turns || 0}  |  tools: ${m.toolsExec || 0}  |  erros: ${m.errors || 0}`)
+  _appendLine(`  latência média: ${Math.round(m.avgLatencyMs || 0)} ms`)
+  const top = Object.entries(m.byTool || {}).sort((a,b)=>b[1]-a[1]).slice(0, 8)
+  top.forEach(([n, c]) => _appendLine(`    ${escHtml(n)} — ${c}x`))
+}
+
+function _cmdTrace() {
+  const all = window.aris9Trace?.all?.() || []
+  if (!all.length) { _appendLine('<span class="t-dim">Sem trace registrado ainda.</span>'); return }
+  _appendLine('<span class="t-dim">── TRACE REACT (últimas etapas) ─────────</span>')
+  all.forEach((e, i) => {
+    _appendLine(`  <span class="t-warn">#${all.length - i}</span> <span class="t-aris">${escHtml(e.tool || '?')}</span> — args: <code class="t-code">${escHtml(JSON.stringify(e.args || {}).slice(0, 200))}</code>`)
+    if (e.raw) _appendLine(`    <span class="t-dim">${escHtml(e.raw.slice(0, 180))}...</span>`)
+  })
+}
+
+function _cmdPersona(args) {
+  const p = (args[0] || '').toLowerCase()
+  const valid = ['minimal', 'padrao', 'detalhado', 'brincalhao']
+  if (!valid.includes(p)) {
+    const cur = window.aris9Prefs?.get?.().persona
+    _appendLine(`<span class="t-dim">Uso: .persona [${valid.join('|')}]  (atual: ${cur})</span>`)
+    return
+  }
+  window.aris9Prefs?.set('persona', p)
+  agentReset()
+  _appendLine(`<span class="t-aris">Persona alterada para: ${escHtml(p)}</span>`)
+}
+
+function _cmdMode(args) {
+  const modes = { readonly: 'readOnly', dryrun: 'dryRun', autoconfirm: 'autoConfirm', planner: 'plannerMode', selfeval: 'selfEval', stream: 'stream', tts: 'ttsAuto', silent: 'silentAuto' }
+  const m = modes[(args[0] || '').toLowerCase()]
+  if (!m) { _appendLine('<span class="t-error">Uso: .mode &lt;readonly|dryrun|autoconfirm|planner|selfeval|stream|tts|silent&gt; on|off</span>'); return }
+  const val = (args[1] || '').toLowerCase()
+  if (val !== 'on' && val !== 'off') {
+    const cur = window.aris9Prefs?.get?.()[m]
+    _appendLine(`<span class="t-dim">${m} = ${cur}</span>`)
+    return
+  }
+  window.aris9Prefs?.set(m, val === 'on')
+  _appendLine(`<span class="t-aris">Modo ${escHtml(m)} = ${val}</span>`)
+}
+
+async function _cmdUndo(args) {
+  const r = await window.aris9Undo?.runLast?.()
+  if (!r) { _appendLine('<span class="t-warn">Nada para desfazer.</span>'); return }
+  if (r.done) _appendLine(`<span class="t-aris">Desfeito: ${escHtml(r.description || '')}</span>`)
+  else _appendLine(`<span class="t-error">Não foi possível desfazer: ${escHtml(r.reason)}</span>`)
+}
+
+function _cmdUndoList() {
+  const list = window.aris9Undo?.list?.() || []
+  if (!list.length) { _appendLine('<span class="t-dim">Pilha de undo vazia.</span>'); return }
+  _appendLine('<span class="t-dim">── UNDO STACK ──────────────</span>')
+  list.slice(0, 10).forEach((e, i) => _appendLine(`  ${i + 1}. ${escHtml(e.description || e.undo?.tool)} <span class="t-dim">(${escHtml(e.at)})</span>`))
+}
+
+async function _cmdSchedule(args) {
+  const sub = (args[0] || '').toLowerCase()
+  if (!sub || sub === 'list') {
+    const all = window.aris9Schedules?.all?.() || []
+    if (!all.length) { _appendLine('<span class="t-dim">Nenhum agendamento.</span>'); return }
+    _appendLine('<span class="t-dim">── AGENDAMENTOS ────────────</span>')
+    all.forEach(s => {
+      const when = s.when || (s.intervalMs + 'ms')
+      _appendLine(`  <span class="t-aris">${escHtml(s.id)}</span> — ${escHtml(when)} → macro ${escHtml(s.macroName)}`)
+    })
+    return
+  }
+  if (sub === 'add') {
+    const when = args[1]
+    const macro = args[2]
+    if (!when || !macro) { _appendLine('<span class="t-error">Uso: .schedule add &lt;HH:MM ou ms&gt; &lt;macro&gt;</span>'); return }
+    const item = /^\d{2}:\d{2}$/.test(when) ? { when, macroName: macro } : { intervalMs: parseInt(when), macroName: macro }
+    const e = window.aris9Schedules?.add?.(item)
+    _appendLine(`<span class="t-aris">Agendado: ${escHtml(e.id)}</span>`)
+    return
+  }
+  if (sub === 'del' || sub === 'rm') {
+    const id = args[1]
+    const ok = window.aris9Schedules?.remove?.(id)
+    _appendLine(ok ? '<span class="t-dim">removido.</span>' : '<span class="t-warn">id não encontrado.</span>')
+    return
+  }
+  _appendLine('<span class="t-error">Uso: .schedule [list|add|del] ...</span>')
+}
+
+async function _cmdInstall(args) {
+  const url = args[0]
+  if (!url) { _appendLine('<span class="t-error">Uso: .install &lt;url-do-tool.js&gt;</span>'); return }
+  try {
+    const r = await window.aris9ToolInstall(url)
+    if (r?.installed) _appendLine(`<span class="t-aris">Tool instalada de: ${escHtml(url)}</span>`)
+  } catch (err) {
+    _appendLine(`<span class="t-error">Falha ao instalar: ${escHtml(err.message)}</span>`)
+  }
+}
