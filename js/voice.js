@@ -235,17 +235,22 @@
   let _wakeIndicator = null
   function _ensureWakeIndicator () {
     if (_wakeIndicator && document.body.contains(_wakeIndicator)) return _wakeIndicator
-    const el = document.createElement('span')
+    const el = document.createElement('button')
+    el.type = 'button'
     el.id = 'wake-indicator'
     el.setAttribute('data-testid', 'wake-indicator')
-    el.setAttribute('role', 'status')
-    el.setAttribute('aria-label', 'Wake word ativa em background')
+    el.setAttribute('role', 'button')
+    el.setAttribute('aria-label', 'Wake word ativa — clique para abrir o modo voz')
+    el.setAttribute('tabindex', '0')
     el.title = 'Wake word ativa — clique para abrir o modo voz'
     el.style.display = 'none'
-    el.addEventListener('click', () => { try { window.openVoiceChat?.() } catch {} })
+    const activate = () => { try { window.openVoiceChat?.() } catch {} }
+    el.addEventListener('click', activate)
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate() }
+    })
     const tb = document.getElementById('titlebar')
     if (tb) {
-      // insere antes do título
       const title = tb.querySelector('#titlebar-title')
       if (title) tb.insertBefore(el, title)
       else tb.appendChild(el)

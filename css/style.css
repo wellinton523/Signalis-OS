@@ -933,26 +933,40 @@ body.vc-open { overflow: hidden; }
 
 /* ── Indicador de WAKE WORD ATIVA no titlebar ─────────────── */
 #wake-indicator {
+  position: relative;
   display: none;
-  width: 10px; height: 10px;
-  border-radius: 50%;
-  background: #ff3040;
+  width: 14px; height: 14px;
   margin: 0 8px 0 6px;
-  box-shadow: 0 0 6px #ff3040aa;
   cursor: pointer;
   align-self: center;
   flex-shrink: 0;
-  animation: wakePulse 1.5s ease-in-out infinite;
   vertical-align: middle;
+  background: transparent;
+  border: 0;
+  padding: 0;
 }
-#wake-indicator:hover {
-  transform: scale(1.15);
+#wake-indicator::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: #ff3040;
+  box-shadow: 0 0 6px #ff3040aa;
+  animation: wakePulse 1.5s ease-in-out infinite;
+}
+#wake-indicator:hover::before {
+  box-shadow: 0 0 14px #ff3040ee, 0 0 22px #ff304088;
+}
+#wake-indicator:focus-visible {
+  outline: 2px solid #ff9090;
+  outline-offset: 1px;
+  border-radius: 50%;
 }
 @keyframes wakePulse {
-  0%   { opacity: 0.55; box-shadow: 0 0 3px #ff3040aa,  0 0 0    #ff304066; transform: scale(0.9); }
-  50%  { opacity: 1;    box-shadow: 0 0 12px #ff3040dd, 0 0 20px #ff304088; transform: scale(1.15); }
-  100% { opacity: 0.55; box-shadow: 0 0 3px #ff3040aa,  0 0 0    #ff304066; transform: scale(0.9); }
+  0%   { opacity: 0.5; box-shadow: 0 0 3px  #ff3040aa; }
+  50%  { opacity: 1;   box-shadow: 0 0 12px #ff3040dd, 0 0 20px #ff304088; }
+  100% { opacity: 0.5; box-shadow: 0 0 3px  #ff3040aa; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #wake-indicator { animation: none; opacity: 1; }
+  #wake-indicator::before { animation: none; opacity: 1; }
 }

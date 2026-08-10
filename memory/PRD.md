@@ -56,3 +56,9 @@ Iteração 4: Backend **16/16 pytest** (auth, guards, TTS 200 audio/mpeg real, S
 - Auto follow-up: após audio.onended da resposta, se `voiceAlwaysListen`, reabre o mic com VAD em 350ms.
 - Epoch token no VAD para descartar resultado se o overlay fechar/reset acontecer no meio.
 - **Testing agent iteração 5**: 100% (12/12 frontend + 3/3 backend regression). Zero bugs.
+
+### Fase 10 — Beep + Indicador global
+- `_wakeBeep()`: 2 tons Web Audio (A5→E6, triangle wave) tipo confirmação de assistente. Removido data-URL quebrado.
+- `#wake-indicator`: `<button role="button" tabindex="0">` no titlebar, ponto vermelho pulsante (só opacity+shadow, transform: none no wrapper). Clique OU Enter/Space abre modo voz. Sincroniza via evento `aris9:pref-changed`. Auto-start se pref era true da sessão anterior.
+- Refatorei toda a lógica de wake para um orquestrador global `window.aris9Wake` em voice.js (fora do voice-chat.js). voice-chat expõe apenas `window.aris9VoiceKick` como callback.
+- **Testing agent iteração 6**: 100% (12/12). 2 recomendações cosméticas de a11y aplicadas: `role=button + tabindex + Enter/Space` no indicador, e removi `transform: scale()` do keyframe para tornar automation-clickable.
