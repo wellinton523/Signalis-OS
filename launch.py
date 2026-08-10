@@ -105,6 +105,81 @@ def check_python():
     ok(f"Python {v.major}.{v.minor}.{v.micro}")
 
 
+# ── Dependências Python do SIGNALIS-OS ─────────────────────────
+# Cada item: (nome pip, módulo de import, obrigatório?, extra_args...)
+# Se obrigatório=False, o server.py degrada graciosamente sem ele.
+PY_DEPS = [
+    # (pip_name,              import_name,           required, extra_pip_args)
+    ("python-dotenv",         "dotenv",              True,    []),
+    ("emergentintegrations",  "emergentintegrations", False,  [
+        "--extra-index-url", "https://d33sy5i8bnduwe.cloudfront.net/simple/"
+    ]),
+    ("psutil",                "psutil",              False,   []),
+    ("pyngrok",               "pyngrok",             False,   []),
+]
+
+def _try_import(module_name):
+    try:
+        __import__(module_name)
+        return True
+    except Exception:
+        return False
+
+def _pip_install(pip_name, extra_args, quiet=True):
+    cmd = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", pip_name] + list(extra_args)
+    if quiet:
+        cmd.insert(4, "--quiet")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout or "").strip()[-400:]
+        return True, ""
+    except FileNotFoundError:
+        return False, "pip não encontrado"
+    except Exception as e:
+        return False, str(e)
+
+def ensure_python_deps(auto_install=True):
+    step("Verificando dependências Python...")
+    missing = []
+    for pip_name, mod, required, extras in PY_DEPS:
+        if _try_import(mod):
+            ok(f"{pip_name} disponível")
+        else:
+            missing.append((pip_name, mod, required, extras))
+
+    if not missing:
+        return
+
+    if not auto_install:
+        for pip_name, mod, required, _ in missing:
+            (fail if required else warn)(f"{pip_name} ausente" + ("" if required else " (opcional)"))
+        return
+
+    info("Instalando pacotes ausentes automaticamente (pode levar 1–2 min)...")
+    still_missing_required = []
+    for pip_name, mod, required, extras in missing:
+        label = pip_name + ("" if required else " (opcional)")
+        step(f"pip install {label}")
+        succeeded, err = _pip_install(pip_name, extras)
+        if succeeded and _try_import(mod):
+            ok(f"{pip_name} instalado")
+            continue
+        # falhou
+        if required:
+            fail(f"Falha ao instalar {pip_name}: {err[:200]}")
+            still_missing_required.append(pip_name)
+        else:
+            warn(f"{pip_name} indisponível — recurso será desligado (ex: voz sem emergentintegrations, métricas sem psutil).")
+            info((err or "")[:200])
+
+    if still_missing_required:
+        fail("Dependências obrigatórias faltando. Instale manualmente:")
+        for n in still_missing_required:
+            info(f"pip install {n}")
+        sys.exit(1)
+
+
 def check_server_py():
     step("Verificando server.py...")
     srv = ROOT / "server.py"
@@ -370,6 +445,11 @@ def parse_args():
         action="store_true",
         help="Pula o download do modelo mesmo se não existir",
     )
+    p.add_argument(
+        "--no-install",
+        action="store_true",
+        help="Não instala automaticamente dependências Python ausentes",
+    )
     return p.parse_args()
 
 
@@ -389,6 +469,7 @@ def main():
 
     # Verificações básicas
     check_python()
+    ensure_python_deps(auto_install=not args.no_install)
     check_server_py()
     check_index_html()
     check_api_key()

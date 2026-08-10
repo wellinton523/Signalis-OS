@@ -62,3 +62,9 @@ Iteração 4: Backend **16/16 pytest** (auth, guards, TTS 200 audio/mpeg real, S
 - `#wake-indicator`: `<button role="button" tabindex="0">` no titlebar, ponto vermelho pulsante (só opacity+shadow, transform: none no wrapper). Clique OU Enter/Space abre modo voz. Sincroniza via evento `aris9:pref-changed`. Auto-start se pref era true da sessão anterior.
 - Refatorei toda a lógica de wake para um orquestrador global `window.aris9Wake` em voice.js (fora do voice-chat.js). voice-chat expõe apenas `window.aris9VoiceKick` como callback.
 - **Testing agent iteração 6**: 100% (12/12). 2 recomendações cosméticas de a11y aplicadas: `role=button + tabindex + Enter/Space` no indicador, e removi `transform: scale()` do keyframe para tornar automation-clickable.
+
+### Fase 11 — Launcher auto-instala dependências
+- `launch.py` ganhou `PY_DEPS` (lista de pacotes com nome pip, módulo de import, obrigatório?, extra-index-url) e `ensure_python_deps(auto_install)`.
+- Pacotes gerenciados: `python-dotenv` (obrigatório), `emergentintegrations` (opcional, extra-index-url da Emergent), `psutil` (opcional), `pyngrok` (opcional).
+- Flag `--no-install` para pular a instalação automática. Se um obrigatório falhar, `sys.exit(1)` com instrução clara. Opcionais viram warn com stderr resumido.
+- Testado com pacote removido: launcher detectou, instalou silenciosamente e prosseguiu.
