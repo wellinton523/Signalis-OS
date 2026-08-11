@@ -1,0 +1,13 @@
+{
+  "name": "signalis-os",
+  "version": "1.0.0",
+  "description": "SIGNALIS-OS — casca Electron pra UI existente (servida pelo server.py local).",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^31.7.7"
+  }
+}

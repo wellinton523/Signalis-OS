@@ -21,6 +21,20 @@
     button.classList.toggle('remote-active', enabled)
   }
 
+  async function showTunnelUrlIfAvailable() {
+    const button = document.getElementById('remote-access-toggle')
+    if (!button) return
+    try {
+      const { url } = await request('/api/system/tunnel')
+      if (url) {
+        button.title = `Túnel público (ngrok): ${url}`
+        button.textContent += ' 🔗'
+      } else {
+        button.title = 'Nenhum túnel público ativo (pyngrok não conectou — veja o console do servidor).'
+      }
+    } catch { /* endpoint pode não existir em versões antigas do server.py — ignora */ }
+  }
+
   function showLogin(message = '') {
     const overlay = document.getElementById('auth-overlay')
     overlay.hidden = false
@@ -30,6 +44,7 @@
   function unlock(status) {
     document.getElementById('auth-overlay').hidden = true
     setRemoteButton(status.remoteAccessEnabled)
+    showTunnelUrlIfAvailable()
 
     // Aplica o nível de permissão retornado pelo servidor
     if (status.permissionLevel && window.permissionManager) {

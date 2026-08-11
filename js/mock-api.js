@@ -17,9 +17,12 @@
   }
 
   window.api = {
-    minimize: () => Promise.resolve(),
-    maximize: () => Promise.resolve(),
-    close: () => { if (confirm('Fechar o SIGNALIS-OS?')) window.close() },
+    minimize: () => window.electronAPI ? window.electronAPI.minimize() : Promise.resolve(),
+    maximize: () => window.electronAPI ? window.electronAPI.maximize() : Promise.resolve(),
+    close:    () => {
+      if (window.electronAPI) { window.electronAPI.close(); return }
+      if (confirm('Fechar o SIGNALIS-OS?')) window.close()
+    },
 
     // ── Filesystem ────────────────────────────────────────────
     homedir:        () => request('/api/fs/home', { method: 'POST' }).then(data => data.path),
@@ -71,8 +74,54 @@
 
     // ── Spotify ───────────────────────────────────────────────
     spotifySearch:    (query, limit)      => request('/api/spotify/search',   { method: 'POST', body: { query, limit } }),
-    spotifyPlay:      (uri)               => request('/api/spotify/play',     { method: 'POST', body: { uri } }),
-    spotifyPlaylist:  (uri, playlist_id)  => request('/api/spotify/playlist', { method: 'POST', body: { uri, playlist_id } }),
-    spotifyStatus:    ()                  => request('/api/spotify/status',   { method: 'POST' })
+    spotifyPlay:      (uri, deviceId)     => request('/api/spotify/play',     { method: 'POST', body: { uri, device_id: deviceId } }),
+    spotifyPlaylist:  (uri, playlist_id, deviceId) => request('/api/spotify/playlist', { method: 'POST', body: { uri, playlist_id, device_id: deviceId } }),
+    spotifyStatus:    ()                  => request('/api/spotify/status',   { method: 'POST' }),
+
+    // ── OAuth de usuário (playback real) ──
+    spotifyLogin:     ()  => request('/api/spotify/auth/login',  { method: 'POST' }),
+    spotifyAuthStatus: () => request('/api/spotify/auth/status', { method: 'POST' }),
+    spotifyLogout:    ()  => request('/api/spotify/auth/logout', { method: 'POST' }),
+
+    // ── Controle de playback real (exigem spotifyLogin antes) ──
+    spotifyPause:     ()          => request('/api/spotify/pause',   { method: 'POST' }),
+    spotifyResume:    ()          => request('/api/spotify/resume',  { method: 'POST' }),
+    spotifyNext:      ()          => request('/api/spotify/next',    { method: 'POST' }),
+    spotifyPrevious:  ()          => request('/api/spotify/previous',{ method: 'POST' }),
+    spotifyDevices:   ()          => request('/api/spotify/devices', { method: 'POST' }),
+    spotifyVolume:    (pct)       => request('/api/spotify/volume',  { method: 'POST', body: { volume_percent: pct } }),
+
+    // ── Execução de código (faltava — code.run já espera isso) ──
+    codeRun: (opts) => request('/api/code/run', { method: 'POST', body: opts }),
+
+    // ── Base de conhecimento (pasta knowledge/) ──
+    knowledgeList:    ()          => request('/api/knowledge/list',    { method: 'POST' }),
+    knowledgeRead:    (file)      => request('/api/knowledge/read',    { method: 'POST', body: { file } }),
+    knowledgeSearch:  (query)     => request('/api/knowledge/search',  { method: 'POST', body: { query } }),
+    knowledgeSummary: (maxChars)  => request('/api/knowledge/summary', { method: 'POST', body: { maxChars } }),
+
+    // ── Banco de dados de memória da IA (arquivo no servidor) ──
+    memoryDbSet:          (key, value, tags) => request('/api/memorydb/set',           { method: 'POST', body: { key, value, tags } }),
+    memoryDbGet:          (key)              => request('/api/memorydb/get',           { method: 'POST', body: { key } }),
+    memoryDbList:         (tag)              => request('/api/memorydb/list',          { method: 'POST', body: { tag } }),
+    memoryDbDelete:       (key)              => request('/api/memorydb/delete',        { method: 'POST', body: { key } }),
+    memoryDbSearch:       (query)            => request('/api/memorydb/search',        { method: 'POST', body: { query } }),
+    memoryDbContextSave:  (name, content)    => request('/api/memorydb/context_save',  { method: 'POST', body: { name, content } }),
+    memoryDbContextLoad:  (name)             => request('/api/memorydb/context_load',  { method: 'POST', body: { name } }),
+    memoryDbContextList:  ()                 => request('/api/memorydb/context_list',  { method: 'POST' })
+  }
+
+  // ── Ajustes de UI quando rodando dentro do Electron ─────────
+  // (fora do Electron, window.electronAPI não existe e nada disso roda —
+  // a UI continua em "BROWSER MODE" com o titlebar sem drag, como já era.)
+  if (window.electronAPI?.isElectron) {
+    document.addEventListener('DOMContentLoaded', () => {
+      const titlebar = document.getElementById('titlebar')
+      if (titlebar) titlebar.style.webkitAppRegion = 'drag'
+      const controls = document.getElementById('titlebar-controls')
+      if (controls) controls.style.webkitAppRegion = 'no-drag'
+      const title = document.getElementById('titlebar-title')
+      if (title) title.textContent = title.textContent.replace('BROWSER MODE', 'DESKTOP MODE')
+    })
   }
 })()

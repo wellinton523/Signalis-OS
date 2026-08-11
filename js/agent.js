@@ -1,6 +1,6 @@
-// agent.js (SIGNALIS-OS v4 - ReAct Textual)
-// Este modelo não suporta tool_calls nativo — usamos ReAct textual:
-// O modelo escreve ACTION/ARGS, o código executa a tool real e devolve OBSERVATION.
+// agent.js (SIGNALIS-OS v5 - tool_calls nativo com fallback ReAct textual)
+// Tenta tool_calls nativo primeiro (function-calling via API); se o modelo/
+// servidor não suportar, cai automaticamente pro protocolo textual ACTION/ARGS.
 const OLLAMA_URL     = '/api/ollama/chat'
 const DUCKDUCKGO_URL = '/api/search/duckduckgo'
 
@@ -10,6 +10,31 @@ const MAX_STEPS_UNLIMITED = 64  // limite quando UNLIMITED_STEPS ativo
 const MAX_HISTORY = 20
 
 let _history = []
+
+// ── Base de conhecimento (pasta knowledge/) — cache em memória ──
+// Injetada automaticamente no system prompt, sem o modelo precisar
+// chamar nenhuma tool ("sem pesquisar"). Refresca a cada 60s no máximo.
+let _knowledgeCache   = ''
+let _knowledgeCacheAt = 0
+const KNOWLEDGE_TTL_MS = 60000
+
+async function _refreshKnowledgeCache() {
+  try {
+    const result = await window.api.knowledgeSummary(2500)
+    _knowledgeCache = result?.summary || ''
+  } catch {
+    // pasta knowledge/ ou endpoint pode não existir em versões antigas do server.py — ignora
+  }
+  _knowledgeCacheAt = Date.now()
+}
+
+function _knowledgeBlock() {
+  if (!_knowledgeCache) return ''
+  return `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BASE DE CONHECIMENTO (fornecida pelo usuário — já está disponível pra você, NÃO precisa pesquisar ou usar tool nenhuma pra isso)
+${_knowledgeCache}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`
+}
 
 function _emitAgentStage(stage, detail) {
   if (typeof window.__onAgentStage === 'function') {
@@ -143,6 +168,7 @@ WORKSPACES DE NAVEGADOR: quando o usuário pedir para abrir vários sites de uma
 
 ${window.aris9Persona?.block?.() || ''}
 ${window.aris9Profile?.profileBlock?.() || ''}
+${_knowledgeBlock()}
 ${window.aris9Prefs?.get?.().plannerMode ? '━━━━━━━━━\nMODO PLANNER EXPLÍCITO: Para toda tarefa com 3+ passos, ANTES de emitir a primeira ACTION, escreva um plano numerado curto (máx 5 linhas) descrevendo os passos e a consequência prevista. Termine com "Pode prosseguir?" — mas continue direto se a tarefa for reversível/segura. Não repita o plano nas ações seguintes.\n━━━━━━━━━' : ''}
 ${window.aris9Prefs?.get?.().dryRun ? '━━━━━━━━━\nMODO DRY-RUN ATIVO: NÃO emita ACTION alguma. Em vez disso, descreva em prosa o que VOCÊ FARIA (quais tools chamaria, com quais args), sem executar nada. Termine com "(simulação — nada foi feito)".\n━━━━━━━━━' : ''}
 ${window.aris9Prefs?.get?.().readOnly ? '━━━━━━━━━\nMODO SOMENTE-LEITURA: só use tools de leitura (memory.get/list/search, filesystem.list/read, system.processes, system.info, browser.workspace.list). Se o usuário pedir algo de escrita/execução, RECUSE educadamente e sugira desativar o modo somente-leitura.\n━━━━━━━━━' : ''}
@@ -158,6 +184,10 @@ let _abortController = null
 
 async function agentSend(userText) {
   await window.toolsReady
+
+  if (Date.now() - _knowledgeCacheAt > KNOWLEDGE_TTL_MS) {
+    await _refreshKnowledgeCache()
+  }
 
   // Cria signal de abort
   _abortController = new AbortController()

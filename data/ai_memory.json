@@ -1,0 +1,97 @@
+{
+  "signalis-os": {
+    "value": "Sistema/Plataforma a ser pesquisada",
+    "tags": [
+      "auto",
+      "conceito",
+      "sistema_operacional"
+    ],
+    "updatedAt": "2026-08-11T11:54:31.535344+00:00"
+  },
+  "Signalis-OS": {
+    "value": "Sistema operacional desenvolvido pela empresa Signalis.",
+    "tags": [
+      "auto",
+      "produto",
+      "sistema_operacional",
+      "empresa:Signalis"
+    ],
+    "updatedAt": "2026-08-11T12:06:12.042996+00:00"
+  },
+  "Objetivo_Signalis-OS": {
+    "value": "Criar uma plataforma unificada para melhorar a produtividade, colaboração e experiência do usuário através da integração de ferramentas.",
+    "tags": [
+      "auto",
+      "objetivo",
+      "funcionalidade",
+      "foco:produtividade"
+    ],
+    "updatedAt": "2026-08-11T12:06:12.052434+00:00"
+  },
+  "Funcionalidades_Chave": {
+    "value": "Integração de Ferramentas, Produtividade, Experiência do Usuário (UX) e Segurança/Privacidade.",
+    "tags": [
+      "auto",
+      "características",
+      "tecnologia"
+    ],
+    "updatedAt": "2026-08-11T12:06:12.062294+00:00"
+  },
+  "sistema_chave": {
+    "value": "ERENYS",
+    "tags": [
+      "auto",
+      "projeto",
+      "sistema",
+      "autenticação"
+    ],
+    "updatedAt": "2026-08-11T12:08:26.282204+00:00"
+  },
+  "SignalIS_Developer": {
+    "value": "SignalIS",
+    "tags": [
+      "auto",
+      "projeto",
+      "desenvolvedor"
+    ],
+    "updatedAt": "2026-08-11T12:11:12.673884+00:00"
+  },
+  "knowledge_search_command": {
+    "value": "knowledge.search",
+    "tags": [
+      "auto",
+      "function",
+      "search",
+      "capability"
+    ],
+    "updatedAt": "2026-08-11T12:15:05.306907+00:00"
+  },
+  "desenvolvedor_signalis_os": {
+    "value": "Equipe por trás do Signal",
+    "tags": [
+      "auto",
+      "projeto",
+      "signal",
+      "desenvolvedor"
+    ],
+    "updatedAt": "2026-08-11T12:20:07.478566+00:00"
+  },
+  "desenvolvimento_exclusao": {
+    "value": "Algo específico não foi desenvolvido pela Erebonys.",
+    "tags": [
+      "auto",
+      "projeto",
+      "atribuição",
+      "exclusão"
+    ],
+    "updatedAt": "2026-08-11T12:22:10.455118+00:00"
+  },
+  "responder_nome": {
+    "value": "ARIS",
+    "tags": [
+      "auto",
+      "persona"
+    ],
+    "updatedAt": "2026-08-11T12:27:23.290202+00:00"
+  }
+}
