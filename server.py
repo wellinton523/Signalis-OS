@@ -15,6 +15,8 @@ import io
 import socket
 import ipaddress
 import tempfile
+import threading
+import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, urlencode
@@ -87,8 +89,26 @@ def _sanitize_provider_error(msg):
     s = re.sub(r"Bearer\s+[A-Za-z0-9_\-\.]+", "Bearer ***REDACTED***", s, flags=re.IGNORECASE)
     return s
 
+def _now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.getenv("PORT", "8000"))
+
+# ── Base de conhecimento (editável pelo usuário) ────────────────
+# Solte arquivos .md/.txt/.json aqui — o agente recebe um resumo
+# automaticamente no system prompt, sem precisar pesquisar.
+KNOWLEDGE_DIR = ROOT / "knowledge"
+KNOWLEDGE_DIR.mkdir(exist_ok=True)
+KNOWLEDGE_EXTS = {".md", ".txt", ".json"}
+
+# ── Banco de dados da IA (memória que ela mesma escreve) ────────
+DATA_DIR        = ROOT / "data"
+DATA_DIR.mkdir(exist_ok=True)
+MEMORY_DB_FILE  = DATA_DIR / "ai_memory.json"
+CONTEXT_DB_FILE = DATA_DIR / "ai_context.json"
+_memory_db_lock = threading.Lock()
 
 # ── Configuração do provider LLM ──────────────────────────────
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
@@ -99,6 +119,28 @@ SPOTIFY_CLIENT_ID     = os.getenv("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
 _spotify_token_cache  = {"access_token": None, "expires_at": 0}
 
+# OAuth de usuário (Authorization Code) — necessário pra controle real de playback
+# (play/pause/next/previous/volume). A Client Credentials acima só serve pra busca.
+SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", f"http://127.0.0.1:{PORT}/api/spotify/auth/callback")
+SPOTIFY_SCOPES        = "user-modify-playback-state user-read-playback-state user-read-currently-playing"
+SPOTIFY_TOKEN_FILE    = ROOT / ".spotify_user_token.json"
+_spotify_user_token_cache = {"access_token": None, "expires_at": 0, "refresh_token": None}
+_spotify_oauth_state      = {"value": None, "created_at": 0}
+
+
+def _spotify_load_persisted_token():
+    """Carrega o refresh_token salvo em disco (se existir) ao iniciar o servidor,
+    pra não precisar refazer login toda vez que o server.py reinicia."""
+    try:
+        if SPOTIFY_TOKEN_FILE.exists():
+            saved = json.loads(SPOTIFY_TOKEN_FILE.read_text())
+            _spotify_user_token_cache["refresh_token"] = saved.get("refresh_token")
+    except (OSError, json.JSONDecodeError):
+        pass
+
+
+_spotify_load_persisted_token()
+
 OLLAMA_HOST  = os.getenv("OLLAMA_HOST", "127.0.0.1")
 OLLAMA_PORT  = int(os.getenv("OLLAMA_PORT", "11434"))
 AUTH_USERNAME = os.getenv("SIGNALIS_USERNAME", "Nyx")
@@ -107,6 +149,7 @@ AUTH_PASSWORD = os.getenv("SIGNALIS_PASSWORD", "84269713")
 # Usuários com permissão máxima (GOD) ao autenticar
 GOD_USERS = {u.strip().lower() for u in os.getenv("SIGNALIS_GOD_USERS", "Nyx").split(",") if u.strip()}
 NGROK_AUTHTOKEN = os.getenv("NGROK_AUTHTOKEN", "3HaTLV9pkMByvDXlYsrFqoJJG1j_6ixupoASXfN8abZyiExRi")
+TUNNEL_PUBLIC_URL = None  # preenchido no boot se o pyngrok conectar com sucesso
 SESSION_TTL = 8 * 60 * 60
 SESSIONS = {}
 REMOTE_ACCESS_ENABLED = False
@@ -142,6 +185,10 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_auth(parsed)
             return
 
+        if parsed.path == "/api/spotify/auth/callback":
+            self._handle_spotify(parsed)
+            return
+
         if parsed.path.startswith("/api/") and not self._is_authenticated():
             self._send_error(401, "Autenticação necessária.")
             return
@@ -157,6 +204,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/system/disk":
             self._handle_sys_disk()
+            return
+
+        if parsed.path == "/api/system/tunnel":
+            self._send_json({"url": TUNNEL_PUBLIC_URL})
             return
 
         if parsed.path == "/api/tools":
@@ -209,6 +260,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path.startswith("/api/vscode/"):
             self._handle_vscode(parsed)
+            return
+
+        if parsed.path.startswith("/api/knowledge/"):
+            self._handle_knowledge(parsed)
+            return
+
+        if parsed.path.startswith("/api/memorydb/"):
+            self._handle_memory_db(parsed)
             return
 
         if parsed.path.startswith("/api/git/"):
@@ -340,6 +399,9 @@ class Handler(BaseHTTPRequestHandler):
         }
         headers.update(extra_headers or {})
         self._send_response(200, body, headers)
+
+    def _send_html(self, status, html):
+        self._send_response(status, html.encode("utf-8"), {"Content-Type": "text/html; charset=utf-8"})
 
     def _handle_voice_stt(self):
         """POST /api/voice/stt — recebe áudio (webm/wav/mp3) e devolve texto (pt-BR)."""
@@ -928,10 +990,156 @@ class Handler(BaseHTTPRequestHandler):
             raw = resp.read()
             return json.loads(raw) if raw else {}
 
-    def _handle_spotify(self, parsed):
+    def _spotify_save_refresh_token(self, refresh_token):
         try:
-            data      = self._read_json_body()
-            operation = parsed.path.rsplit("/", 1)[-1]   # search | play | playlist | devices | pause | resume | next | previous | status
+            SPOTIFY_TOKEN_FILE.write_text(json.dumps({"refresh_token": refresh_token}))
+        except OSError:
+            pass
+
+    def _spotify_user_token(self):
+        """Retorna um access_token de USUÁRIO válido (escopo de playback), renovando
+        via refresh_token quando necessário. Levanta PermissionError se o usuário
+        nunca autorizou (ou se a autorização foi revogada)."""
+        global _spotify_user_token_cache
+        now = time.time()
+        if _spotify_user_token_cache["access_token"] and _spotify_user_token_cache["expires_at"] > now + 30:
+            return _spotify_user_token_cache["access_token"]
+
+        refresh_token = _spotify_user_token_cache.get("refresh_token")
+        if not refresh_token:
+            raise PermissionError("Spotify não autorizado. Use spotify.login primeiro (abre o navegador pra você fazer login).")
+        if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
+            raise ValueError("SPOTIFY_CLIENT_ID e SPOTIFY_CLIENT_SECRET não configurados no .env do servidor.")
+
+        creds   = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
+        payload = urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token}).encode()
+        req = urllib.request.Request(
+            "https://accounts.spotify.com/api/token", data=payload,
+            headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            # refresh_token revogado/expirado — força novo login
+            _spotify_user_token_cache["refresh_token"] = None
+            _spotify_user_token_cache["access_token"]  = None
+            raise PermissionError("Sessão do Spotify expirada ou revogada. Use spotify.login pra autorizar de novo.") from e
+
+        _spotify_user_token_cache["access_token"] = data["access_token"]
+        _spotify_user_token_cache["expires_at"]   = now + int(data.get("expires_in", 3600))
+        if data.get("refresh_token"):  # o Spotify às vezes rotaciona o refresh_token
+            _spotify_user_token_cache["refresh_token"] = data["refresh_token"]
+            self._spotify_save_refresh_token(data["refresh_token"])
+        return data["access_token"]
+
+    def _spotify_user_request(self, method, path, body=None, params=None):
+        """Requisição autenticada com token de USUÁRIO (Player API — play/pause/etc)."""
+        token = self._spotify_user_token()
+        url = f"https://api.spotify.com/v1{path}"
+        clean_params = {k: v for k, v in (params or {}).items() if v is not None}
+        if clean_params:
+            url += "?" + urlencode(clean_params)
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(
+            url, data=data, method=method,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw = resp.read()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode(errors="replace")
+            if e.code == 404 and "NO_ACTIVE_DEVICE" in err_body.upper():
+                raise ValueError("Nenhum dispositivo Spotify ativo no momento. Abra o Spotify (app ou web player) em algum dispositivo e tente de novo.") from e
+            if e.code == 403:
+                raise ValueError("Spotify recusou o comando (403) — geralmente porque a conta não é Premium. Controle remoto de playback exige Spotify Premium.") from e
+            raise ValueError(f"Erro na API do Spotify ({e.code}): {_sanitize_provider_error(err_body)}") from e
+
+
+    def _handle_spotify(self, parsed):
+        op_path = parsed.path[len("/api/spotify/"):]
+
+        # ── Sub-rotas OAuth (login / callback / status / logout) ──
+        if op_path == "auth/login":
+            try:
+                if not SPOTIFY_CLIENT_ID:
+                    raise ValueError("SPOTIFY_CLIENT_ID não configurado no .env do servidor.")
+                state = secrets.token_urlsafe(16)
+                _spotify_oauth_state["value"]      = state
+                _spotify_oauth_state["created_at"] = time.time()
+                auth_url = "https://accounts.spotify.com/authorize?" + urlencode({
+                    "client_id":     SPOTIFY_CLIENT_ID,
+                    "response_type": "code",
+                    "redirect_uri":  SPOTIFY_REDIRECT_URI,
+                    "scope":         SPOTIFY_SCOPES,
+                    "state":         state,
+                })
+                webbrowser.open(auth_url)
+                self._send_json({"opened": True, "authUrl": auth_url})
+            except ValueError as exc:
+                self._send_error(400, str(exc))
+            return
+
+        if op_path == "auth/callback":
+            qs    = parse_qs(parsed.query)
+            error = qs.get("error", [None])[0]
+            code  = qs.get("code", [None])[0]
+            state = qs.get("state", [None])[0]
+
+            if error:
+                self._send_html(400, f"<h2>Falha na autorização do Spotify</h2><p>{error}</p><p>Pode fechar esta aba e tentar spotify.login de novo.</p>")
+                return
+            if not state or state != _spotify_oauth_state.get("value"):
+                self._send_html(400, "<h2>Estado inválido (possível CSRF ou link expirado)</h2><p>Tente spotify.login de novo.</p>")
+                return
+            if not code:
+                self._send_html(400, "<h2>Código de autorização ausente</h2>")
+                return
+            _spotify_oauth_state["value"] = None  # uso único
+
+            creds   = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
+            payload = urlencode({"grant_type": "authorization_code", "code": code, "redirect_uri": SPOTIFY_REDIRECT_URI}).encode()
+            req = urllib.request.Request("https://accounts.spotify.com/api/token", data=payload,
+                headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"}, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read())
+            except urllib.error.HTTPError as e:
+                self._send_html(400, f"<h2>Falha ao trocar código por token</h2><p>{_sanitize_provider_error(e.read().decode(errors='replace'))}</p>")
+                return
+
+            _spotify_user_token_cache["access_token"]  = data["access_token"]
+            _spotify_user_token_cache["expires_at"]    = time.time() + int(data.get("expires_in", 3600))
+            _spotify_user_token_cache["refresh_token"] = data.get("refresh_token")
+            if data.get("refresh_token"):
+                self._spotify_save_refresh_token(data["refresh_token"])
+
+            self._send_html(200, "<h2>Spotify autorizado com sucesso!</h2><p>Pode fechar esta aba e voltar pro SIGNALIS-OS — o playback real já está disponível.</p>")
+            return
+
+        if op_path == "auth/status":
+            self._send_json({"authenticated": bool(_spotify_user_token_cache.get("refresh_token"))})
+            return
+
+        if op_path == "auth/logout":
+            _spotify_user_token_cache["access_token"]  = None
+            _spotify_user_token_cache["refresh_token"] = None
+            _spotify_user_token_cache["expires_at"]    = 0
+            try:
+                if SPOTIFY_TOKEN_FILE.exists():
+                    SPOTIFY_TOKEN_FILE.unlink()
+            except OSError:
+                pass
+            self._send_json({"loggedOut": True})
+            return
+
+        # ── Operações normais (busca / playback) ────────────────
+        try:
+            data      = self._read_json_body() if self.command == "POST" else {}
+            operation = op_path   # search | play | playlist | status | pause | resume | next | previous | devices | volume
 
             # ── Buscar faixas ─────────────────────────────────
             if operation == "search":
@@ -965,50 +1173,118 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"tracks": tracks, "playlists": playlists})
                 return
 
-            # ── Tocar uma faixa específica ─────────────────────
+            # ── Tocar uma faixa específica (playback real se autenticado) ──
             if operation == "play":
                 uri = str(data.get("uri", "")).strip()
                 if not uri:
                     raise ValueError("Parâmetro 'uri' (spotify:track:...) obrigatório.")
-                # PUT /me/player/play exige OAuth — abre a URL pública com Client Credentials
+                if _spotify_user_token_cache.get("refresh_token"):
+                    device_id = data.get("device_id")
+                    self._spotify_user_request("PUT", "/me/player/play", body={"uris": [uri]},
+                                                params={"device_id": device_id} if device_id else None)
+                    self._send_json({"playing": True, "uri": uri, "real_playback": True})
+                    return
+                # Sem autorização de usuário — fallback: abre a página da faixa no navegador
                 track_id = uri.split(":")[-1]
                 target   = f"https://open.spotify.com/track/{track_id}"
                 webbrowser.open(target)
-                self._send_json({"opened": target, "uri": uri})
+                self._send_json({
+                    "opened": target, "uri": uri, "real_playback": False,
+                    "note": "Isso só abriu a página no navegador — não é playback real. Use spotify.login pra autorizar controle de verdade."
+                })
                 return
 
-            # ── Tocar uma playlist ─────────────────────────────
+            # ── Tocar uma playlist (playback real se autenticado) ──
             if operation == "playlist":
-                uri     = str(data.get("uri", "")).strip()
-                pl_id   = str(data.get("playlist_id", "")).strip()
-                # Resolve URI
+                uri   = str(data.get("uri", "")).strip()
+                pl_id = str(data.get("playlist_id", "")).strip()
                 if not uri and pl_id:
                     uri = f"spotify:playlist:{pl_id}"
                 if not uri:
                     raise ValueError("Parâmetro 'uri' ou 'playlist_id' obrigatório.")
+                if _spotify_user_token_cache.get("refresh_token"):
+                    device_id = data.get("device_id")
+                    self._spotify_user_request("PUT", "/me/player/play", body={"context_uri": uri},
+                                                params={"device_id": device_id} if device_id else None)
+                    self._send_json({"playing": True, "uri": uri, "real_playback": True})
+                    return
                 playlist_id = uri.split(":")[-1]
                 target      = f"https://open.spotify.com/playlist/{playlist_id}"
                 webbrowser.open(target)
-                self._send_json({"opened": target, "uri": uri})
+                self._send_json({
+                    "opened": target, "uri": uri, "real_playback": False,
+                    "note": "Isso só abriu a página no navegador — não é playback real. Use spotify.login pra autorizar controle de verdade."
+                })
                 return
 
-            # ── Status / faixa atual (só funciona com OAuth) ───
+            # ── Controle de playback real (exigem OAuth de usuário) ──
+            if operation == "pause":
+                self._spotify_user_request("PUT", "/me/player/pause")
+                self._send_json({"paused": True})
+                return
+
+            if operation == "resume":
+                self._spotify_user_request("PUT", "/me/player/play")
+                self._send_json({"resumed": True})
+                return
+
+            if operation == "next":
+                self._spotify_user_request("POST", "/me/player/next")
+                self._send_json({"skipped": True})
+                return
+
+            if operation == "previous":
+                self._spotify_user_request("POST", "/me/player/previous")
+                self._send_json({"previous": True})
+                return
+
+            if operation == "devices":
+                res = self._spotify_user_request("GET", "/me/player/devices")
+                self._send_json({"devices": res.get("devices", [])})
+                return
+
+            if operation == "volume":
+                pct = data.get("volume_percent")
+                if pct is None or not (0 <= int(pct) <= 100):
+                    raise ValueError("volume_percent deve ser um inteiro entre 0 e 100.")
+                self._spotify_user_request("PUT", "/me/player/volume", params={"volume_percent": int(pct)})
+                self._send_json({"volume": int(pct)})
+                return
+
+            # ── Status / faixa atual ────────────────────────────
             if operation == "status":
-                # Com Client Credentials não é possível ler o player do usuário.
-                # Retornamos info útil sobre as capacidades disponíveis.
+                if _spotify_user_token_cache.get("refresh_token"):
+                    res = self._spotify_user_request("GET", "/me/player")
+                    if not res:
+                        self._send_json({"authenticated": True, "playing": False, "note": "Nenhuma reprodução ativa no momento."})
+                        return
+                    item = res.get("item") or {}
+                    self._send_json({
+                        "authenticated": True,
+                        "playing":       res.get("is_playing", False),
+                        "track":         item.get("name"),
+                        "artist":        ", ".join(a["name"] for a in item.get("artists", [])),
+                        "progress_ms":   res.get("progress_ms"),
+                        "duration_ms":   item.get("duration_ms"),
+                        "device":        (res.get("device") or {}).get("name"),
+                    })
+                    return
                 self._send_json({
-                    "note": "Para controle completo do player (pause/resume/status em tempo real) é necessário OAuth do usuário. Use spotify.search + spotify.play para abrir músicas.",
+                    "authenticated": False,
+                    "note": "Não autenticado. Use spotify.login pra autorizar e ter controle real de playback (play/pause/next/volume).",
                     "client_credentials_ok": bool(SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET),
                 })
                 return
 
             self._send_error(404, f"Operação Spotify desconhecida: {operation}")
 
+        except PermissionError as exc:
+            self._send_error(401, str(exc))
         except ValueError as exc:
             self._send_error(400, str(exc))
         except urllib.error.HTTPError as exc:
             body = exc.read().decode(errors="replace")
-            self._send_error(exc.code, f"Spotify API erro {exc.code}: {body[:300]}")
+            self._send_error(exc.code, f"Spotify API erro {exc.code}: {_sanitize_provider_error(body[:300])}")
         except Exception as exc:
             self._send_error(500, f"Erro interno Spotify: {exc}")
 
@@ -1263,7 +1539,193 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
 
-    # ── VS Code (via CLI `code`) ───────────────────────────────
+    # ── Base de conhecimento (arquivos que o usuário coloca) ────
+    def _knowledge_files(self):
+        return sorted(
+            p for p in KNOWLEDGE_DIR.iterdir()
+            if p.is_file() and p.suffix.lower() in KNOWLEDGE_EXTS and not p.name.startswith("_")
+        )
+
+    def _handle_knowledge(self, parsed):
+        try:
+            op = parsed.path.rsplit("/", 1)[-1]
+            data = self._read_json_body() if self.command == "POST" else {}
+
+            if op == "list":
+                files = [
+                    {"name": p.name, "size": p.stat().st_size, "modified": int(p.stat().st_mtime)}
+                    for p in self._knowledge_files()
+                ]
+                self._send_json({"files": files, "folder": str(KNOWLEDGE_DIR)})
+                return
+
+            if op == "read":
+                name = str(data.get("file", "")).strip()
+                if not name or "/" in name or "\\" in name or name.startswith("."):
+                    raise ValueError("Nome de arquivo inválido.")
+                target = (KNOWLEDGE_DIR / name).resolve()
+                if KNOWLEDGE_DIR.resolve() not in target.parents and target != KNOWLEDGE_DIR.resolve():
+                    raise ValueError("Caminho fora da pasta knowledge/.")
+                if not target.exists() or target.suffix.lower() not in KNOWLEDGE_EXTS:
+                    raise ValueError(f"Arquivo não encontrado: {name}")
+                self._send_json({"file": name, "content": target.read_text(encoding="utf-8", errors="replace")})
+                return
+
+            if op == "search":
+                query = str(data.get("query", "")).strip().lower()
+                if not query:
+                    raise ValueError("Parâmetro 'query' obrigatório.")
+                matches = []
+                for p in self._knowledge_files():
+                    text = p.read_text(encoding="utf-8", errors="replace")
+                    idx = text.lower().find(query)
+                    if idx != -1:
+                        start = max(0, idx - 80)
+                        snippet = text[start:idx + 80].strip()
+                        matches.append({"file": p.name, "snippet": snippet})
+                self._send_json({"matches": matches})
+                return
+
+            if op == "summary":
+                # Concatena arquivos pequenos até um orçamento de caracteres —
+                # usado pra injetar automaticamente no system prompt do agente.
+                budget = int(data.get("maxChars", 3000))
+                parts, used, truncated_files = [], 0, []
+                for p in self._knowledge_files():
+                    text = p.read_text(encoding="utf-8", errors="replace").strip()
+                    if not text:
+                        continue
+                    remaining = budget - used
+                    if remaining <= 0:
+                        truncated_files.append(p.name)
+                        continue
+                    chunk = text if len(text) <= remaining else text[:remaining]
+                    if len(text) > remaining:
+                        truncated_files.append(p.name)
+                    parts.append(f"### {p.name}\n{chunk}")
+                    used += len(chunk)
+                self._send_json({"summary": "\n\n".join(parts), "truncatedFiles": truncated_files, "totalFiles": len(self._knowledge_files())})
+                return
+
+            raise ValueError(f"Operação de knowledge desconhecida: {op}")
+        except ValueError as exc:
+            self._send_error(400, str(exc))
+        except Exception as exc:
+            self._send_error(500, f"Erro na base de conhecimento: {exc}")
+
+    # ── Banco de dados de memória da IA (arquivo JSON no servidor) ──
+    def _memory_db_load(self):
+        try:
+            if MEMORY_DB_FILE.exists():
+                return json.loads(MEMORY_DB_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+        return {}
+
+    def _memory_db_save(self, data):
+        MEMORY_DB_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _context_db_load(self):
+        try:
+            if CONTEXT_DB_FILE.exists():
+                return json.loads(CONTEXT_DB_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+        return {}
+
+    def _context_db_save(self, data):
+        CONTEXT_DB_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _handle_memory_db(self, parsed):
+        try:
+            op   = parsed.path.rsplit("/", 1)[-1]
+            data = self._read_json_body() if self.command == "POST" else {}
+
+            with _memory_db_lock:
+                if op == "set":
+                    key = str(data.get("key", "")).strip()
+                    if not key:
+                        raise ValueError("A chave é obrigatória.")
+                    store = self._memory_db_load()
+                    store[key] = {"value": data.get("value"), "tags": data.get("tags") or [], "updatedAt": _now_iso()}
+                    self._memory_db_save(store)
+                    self._send_json({"key": key, "stored": True})
+                    return
+
+                if op == "get":
+                    key = str(data.get("key", "")).strip()
+                    entry = self._memory_db_load().get(key)
+                    if not entry:
+                        self._send_json({"key": key, "found": False, "value": None})
+                        return
+                    self._send_json({"key": key, "found": True, **entry})
+                    return
+
+                if op == "list":
+                    store = self._memory_db_load()
+                    tag = data.get("tag")
+                    entries = [{"key": k, **v} for k, v in store.items()]
+                    if tag:
+                        entries = [e for e in entries if tag in (e.get("tags") or [])]
+                    self._send_json({"entries": entries})
+                    return
+
+                if op == "delete":
+                    key = str(data.get("key", "")).strip()
+                    store = self._memory_db_load()
+                    existed = key in store
+                    store.pop(key, None)
+                    self._memory_db_save(store)
+                    self._send_json({"key": key, "deleted": existed})
+                    return
+
+                if op == "search":
+                    query = str(data.get("query", "")).strip().lower()
+                    if not query:
+                        raise ValueError("Parâmetro 'query' obrigatório.")
+                    store = self._memory_db_load()
+                    results = []
+                    for k, e in store.items():
+                        val_str = e["value"] if isinstance(e.get("value"), str) else json.dumps(e.get("value"), ensure_ascii=False)
+                        if query in k.lower() or query in val_str.lower() or any(query in t.lower() for t in e.get("tags") or []):
+                            results.append({"key": k, **e})
+                    self._send_json({"entries": results})
+                    return
+
+                if op == "context_save":
+                    name = str(data.get("name", "")).strip()
+                    if not name:
+                        raise ValueError("O nome é obrigatório.")
+                    store = self._context_db_load()
+                    store[name] = {"content": data.get("content", ""), "savedAt": _now_iso()}
+                    self._context_db_save(store)
+                    self._send_json({"name": name, "saved": True})
+                    return
+
+                if op == "context_load":
+                    name = str(data.get("name", "")).strip()
+                    entry = self._context_db_load().get(name)
+                    if not entry:
+                        self._send_json({"name": name, "found": False, "content": None})
+                        return
+                    self._send_json({"name": name, "found": True, **entry})
+                    return
+
+                if op == "context_list":
+                    store = self._context_db_load()
+                    self._send_json({"entries": [
+                        {"name": k, "savedAt": v.get("savedAt"), "preview": str(v.get("content", ""))[:80]}
+                        for k, v in store.items()
+                    ]})
+                    return
+
+            raise ValueError(f"Operação de memória desconhecida: {op}")
+        except ValueError as exc:
+            self._send_error(400, str(exc))
+        except Exception as exc:
+            self._send_error(500, f"Erro no banco de memória: {exc}")
+
+
     def _run_cli(self, args, timeout=20):
         try:
             result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
@@ -1506,7 +1968,8 @@ if __name__ == "__main__":
         conf.get_default().auth_token = NGROK_AUTHTOKEN
         # Abre o túnel público apontando para a porta do servidor
         public_tunnel = ngrok.connect(PORT)
-        print(f"║  URL PÚBLICA : {public_tunnel.public_url:<21} ║")
+        TUNNEL_PUBLIC_URL = public_tunnel.public_url
+        print(f"║  URL PÚBLICA : {TUNNEL_PUBLIC_URL:<21} ║")
     except ImportError:
         print(f"║  TUNNEL      : pyngrok não instalado  ║")
     except Exception as e:
