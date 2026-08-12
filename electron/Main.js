@@ -68,8 +68,8 @@ function createWindow () {
     height: 860,
     minWidth: 860,
     minHeight: 560,
-    frame: false,               // UI customizada sem bordas nativas
-    backgroundColor: '#05090d',
+    frame: false,            // Remove a moldura padrão da janela
+    transparent: true,
     show: false,                // Esconde até estar pronto
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

@@ -43,8 +43,12 @@
   <!-- ── BARRA DE TÍTULO ──────────────────────────────────── -->
   <div id="titlebar">
     <button id="mobile-menu-btn" data-testid="mobile-menu-btn" class="win-ctrl" aria-label="Abrir menu" aria-controls="mobile-drawer" aria-expanded="false" title="Menu" onclick="window.toggleMobileDrawer && window.toggleMobileDrawer()">☰</button>
-    <span id="titlebar-title">SIGNALIS-OS // ARIS-9 // BROWSER MODE</span>
+    <span id="titlebar-title">SIGNALIS-OS // ARIS-9</span>
     <div id="titlebar-controls">
+      <button id="btn-copy-ngrok" class="titlebar-btn ngrok-btn" onclick="copyNgrokUrl()" title="Copiar URL Pública do Ngrok">
+        <span class="ngrok-icon">🌐</span>
+        <span class="ngrok-text">NGROK</span>
+      </button>
       <button class="win-ctrl" onclick="api.minimize()" title="Minimizar">─</button>
       <button class="win-ctrl" onclick="api.maximize()" title="Maximizar">□</button>
       <button class="win-ctrl close" onclick="api.close()" title="Fechar">✕</button>
@@ -192,8 +196,44 @@
   <script src="js/terminal.js"></script>
   <script src="js/sysmon.js"></script>
   <script src="js/desktop.js"></script>
+  <script src="js/Shader.js"></script>
 
   <script>
+
+    async function copyNgrokUrl() {
+      const btn = document.getElementById('btn-copy-ngrok');
+      const textEl = btn.querySelector('.ngrok-text');
+      const originalText = textEl.innerText;
+
+      try {
+        textEl.innerText = 'BUSCANDO...';
+
+        const response = await fetch('/api/ngrok-url');
+        const data = await response.json();
+
+        if (!response.ok || !data.url) {
+          throw new Error(data.error || 'Nenhum túnel ativo.');
+        }
+
+        await navigator.clipboard.writeText(data.url);
+
+        textEl.innerText = 'COPIADO!';
+        btn.style.borderColor = '#00ffcc';
+        btn.style.color = '#00ffcc';
+
+      } catch (err) {
+        console.error('Erro ao copiar Ngrok URL:', err);
+        textEl.innerText = 'OFFLINE';
+        btn.style.borderColor = '#ff4444';
+        btn.style.color = '#ff4444';
+      } finally {
+        setTimeout(() => {
+          textEl.innerText = originalText;
+          btn.style.borderColor = '';
+          btn.style.color = '';
+        }, 2500);
+      }
+    }
     // ── Ações Ilimitadas ──────────────────────────────────────
     window.UNLIMITED_STEPS = false
 
