@@ -93,5 +93,94 @@
       "persona"
     ],
     "updatedAt": "2026-08-11T12:27:23.290202+00:00"
+  },
+  "ar_identity": {
+    "value": "Modelo de linguagem grande (LLM)",
+    "tags": [
+      "auto",
+      "modelo",
+      "função"
+    ],
+    "updatedAt": "2026-08-13T12:37:10.840426+00:00"
+  },
+  "capabilities_media": {
+    "value": "Controle de mídia (Spotify: tocar, pausar, avançar, volume)",
+    "tags": [
+      "auto",
+      "ferramenta",
+      "mídia"
+    ],
+    "updatedAt": "2026-08-13T12:37:10.849946+00:00"
+  },
+  "capabilities_system": {
+    "value": "Interação com o sistema (captura de tela, OCR, abrir arquivos/aplicativos)",
+    "tags": [
+      "auto",
+      "ferramenta",
+      "sistema"
+    ],
+    "updatedAt": "2026-08-13T12:37:10.858957+00:00"
+  },
+  "capabilities_code": {
+    "value": "Revisão de código (abrir e comparar arquivos no VS Code)",
+    "tags": [
+      "auto",
+      "ferramenta",
+      "código"
+    ],
+    "updatedAt": "2026-08-13T12:37:10.866953+00:00"
+  },
+  "core_function": {
+    "value": "Assistente em diversas tarefas digitais",
+    "tags": [
+      "auto",
+      "função"
+    ],
+    "updatedAt": "2026-08-13T12:37:10.875472+00:00"
+  },
+  "nome_modelo": {
+    "value": "Modelo de linguagem grande treinado pelo Google",
+    "tags": [
+      "auto",
+      "identidade",
+      "modelo"
+    ],
+    "updatedAt": "2026-08-13T12:47:14.432749+00:00"
+  },
+  "nome_ai": {
+    "value": "Gemma 4",
+    "tags": [
+      "auto",
+      "nome",
+      "identidade"
+    ],
+    "updatedAt": "2026-08-13T12:48:59.740540+00:00"
+  },
+  "preferencia_topico": {
+    "value": "Mitologia Nórdica",
+    "tags": [
+      "auto",
+      "preferência",
+      "mitologia"
+    ],
+    "updatedAt": "2026-08-13T14:05:40.062968+00:00"
+  },
+  "entidades_chave": {
+    "value": "Odin, Thor, Loki",
+    "tags": [
+      "auto",
+      "personagem",
+      "deus"
+    ],
+    "updatedAt": "2026-08-13T14:05:40.079947+00:00"
+  },
+  "conceito_principal": {
+    "value": "Ragnarök",
+    "tags": [
+      "auto",
+      "evento",
+      "apocalipse"
+    ],
+    "updatedAt": "2026-08-13T14:05:40.089222+00:00"
   }
 }

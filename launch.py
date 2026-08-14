@@ -6,8 +6,8 @@ Inicializa todo o ambiente de uma vez:
   2. Baixa o modelo se necessário
   3. Cria o Modelfile com contexto expandido
   4. Sobe o Ollama em background (se local)
-  5. Sobe o servidor HTTP
-  6. Abre o navegador automaticamente
+  5. Sobe o servidor HTTP (server.py)
+  6. Abre o aplicativo Electron automaticamente
 """
 
 import os
@@ -18,7 +18,6 @@ import platform
 import argparse
 import threading
 import subprocess
-import webbrowser
 from pathlib import Path
 
 # ── Configurações padrão ──────────────────────────────────────
@@ -48,6 +47,9 @@ NUM_CTX      = int(os.getenv("NUM_CTX", "32768"))
 CUSTOM_MODEL_NAME = "aris9"
 
 CLOUD_PROVIDERS = {"openrouter", "groq", "openai"}
+
+# Global para rastrear o processo do Electron e encerrar se necessário
+ELECTRON_PROCESS = None
 
 # ── Cores no terminal ─────────────────────────────────────────
 IS_WIN = platform.system() == "Windows"
@@ -105,16 +107,9 @@ def check_python():
     ok(f"Python {v.major}.{v.minor}.{v.micro}")
 
 
-# ── Dependências Python do SIGNALIS-OS ─────────────────────────
-# Cada item: (nome pip, módulo de import, obrigatório?, extra_args...)
-# Se obrigatório=False, o server.py degrada graciosamente sem ele.
 PY_DEPS = [
-    # (pip_name,              import_name,           required, extra_pip_args)
     ("python-dotenv",         "dotenv",              True,    []),
-    # Voz (STT/TTS) — precisa de UMA das duas libs abaixo.
-    # 'openai' está no PyPI público (funciona em qualquer lugar com OPENAI_API_KEY).
     ("openai",                "openai",              False,   []),
-    # 'emergentintegrations' só funciona dentro do ambiente Emergent (usa EMERGENT_LLM_KEY).
     ("emergentintegrations",  "emergentintegrations", False,  [
         "--extra-index-url", "https://d33sy5i8bnduwe.cloudfront.net/simple/"
     ]),
@@ -160,7 +155,7 @@ def ensure_python_deps(auto_install=True):
             (fail if required else warn)(f"{pip_name} ausente" + ("" if required else " (opcional)"))
         return
 
-    info("Instalando pacotes ausentes automaticamente (pode levar 1–2 min)...")
+    info("Instalando pacotes ausentes automaticamente...")
     still_missing_required = []
     for pip_name, mod, required, extras in missing:
         label = pip_name + ("" if required else " (opcional)")
@@ -169,12 +164,11 @@ def ensure_python_deps(auto_install=True):
         if succeeded and _try_import(mod):
             ok(f"{pip_name} instalado")
             continue
-        # falhou
         if required:
             fail(f"Falha ao instalar {pip_name}: {err[:200]}")
             still_missing_required.append(pip_name)
         else:
-            warn(f"{pip_name} indisponível — recurso será desligado (ex: voz sem emergentintegrations, métricas sem psutil).")
+            warn(f"{pip_name} indisponível — recurso será desligado.")
             info((err or "")[:200])
 
     if still_missing_required:
@@ -189,18 +183,16 @@ def check_server_py():
     srv = ROOT / "server.py"
     if not srv.exists():
         fail("server.py não encontrado na pasta do launcher.")
-        info("Certifique-se que launch.py está na mesma pasta que server.py")
         sys.exit(1)
     ok("server.py encontrado")
 
 
 def check_index_html():
     step("Verificando index.html...")
-    # Aceita tanto src/index.html quanto index.html na raiz
     candidates = [ROOT / "index.html", ROOT / "src" / "index.html"]
     found = next((p for p in candidates if p.exists()), None)
     if not found:
-        warn("index.html não encontrado — o servidor vai subir mas pode não exibir nada.")
+        warn("index.html não encontrado — o servidor pode não exibir nada.")
     else:
         ok(f"index.html em {found.relative_to(ROOT)}")
 
@@ -211,8 +203,6 @@ def check_api_key():
     step(f"Verificando chave de API para {LLM_PROVIDER}...")
     if not LLM_API_KEY:
         fail(f"LLM_API_KEY não configurada para provider '{LLM_PROVIDER}'.")
-        info("Configure via: export LLM_API_KEY=sua-chave")
-        info("Ou rode com Ollama local: python launch.py --provider ollama")
         sys.exit(1)
     ok(f"Chave configurada ({LLM_API_KEY[:8]}...)")
 
@@ -223,18 +213,13 @@ def check_ollama_installed():
         ok("Ollama instalado")
         return True
     warn("Ollama não encontrado no PATH.")
-    info("Instale em: https://ollama.com")
-    info("Linux/Mac: curl -fsSL https://ollama.com/install.sh | sh")
     return False
 
 
 def is_ollama_running():
-    """Tenta conectar na API do Ollama."""
-    import urllib.request, urllib.error
+    import urllib.request
     try:
-        urllib.request.urlopen(
-            f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/tags", timeout=3
-        )
+        urllib.request.urlopen(f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/tags", timeout=3)
         return True
     except Exception:
         return False
@@ -261,7 +246,6 @@ def start_ollama():
                 stderr=subprocess.DEVNULL,
             )
 
-        # Aguarda até 15s o Ollama subir
         for i in range(15):
             time.sleep(1)
             if is_ollama_running():
@@ -276,12 +260,9 @@ def start_ollama():
 
 
 def list_local_models():
-    """Retorna lista de modelos já baixados."""
     import urllib.request, json
     try:
-        with urllib.request.urlopen(
-            f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/tags", timeout=5
-        ) as r:
+        with urllib.request.urlopen(f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/tags", timeout=5) as r:
             data = json.loads(r.read())
             return [m["name"] for m in data.get("models", [])]
     except Exception:
@@ -305,7 +286,6 @@ def pull_model():
 
     print(cyan(f"    Baixando {OLLAMA_MODEL} (pode demorar alguns minutos)..."))
     try:
-        # Roda o pull mostrando o output em tempo real
         proc = subprocess.run(["ollama", "pull", OLLAMA_MODEL])
         if proc.returncode == 0:
             ok(f"Modelo '{OLLAMA_MODEL}' baixado com sucesso")
@@ -316,10 +296,6 @@ def pull_model():
 
 
 def create_modelfile():
-    """
-    Cria um modelo customizado 'aris9' com contexto expandido.
-    Isso corrige o limite padrão de 4096 tokens do Ollama.
-    """
     step(f"Configurando contexto do modelo (num_ctx={NUM_CTX})...")
     models = list_local_models()
 
@@ -334,7 +310,6 @@ PARAMETER num_gpu 99
 SYSTEM "Você é ARIS-9, a inteligência de bordo do SIGNALIS-OS."
 """
     modelfile_path.write_text(modelfile_content)
-    info(f"Modelfile criado em {modelfile_path}")
 
     try:
         proc = subprocess.run(
@@ -345,38 +320,66 @@ SYSTEM "Você é ARIS-9, a inteligência de bordo do SIGNALIS-OS."
             ok(f"Modelo '{CUSTOM_MODEL_NAME}' criado com ctx={NUM_CTX}")
         else:
             warn(f"Não foi possível criar o modelo customizado: {proc.stderr.strip()}")
-            info(f"O sistema vai usar '{OLLAMA_MODEL}' diretamente com ctx padrão.")
     except Exception as e:
         warn(f"Erro ao criar Modelfile: {e}")
     finally:
-        # Remove o Modelfile temporário
         if modelfile_path.exists():
             modelfile_path.unlink()
 
 
-def open_browser_delayed(url, delay=2.5):
-    """Abre o navegador após um pequeno delay para o servidor subir."""
-    def _open():
+# ── Execução do Electron ao invés do Navegador ───────────────────
+
+def start_electron_delayed(delay=2.0):
+    """Sobe a aplicação Electron após o servidor HTTP estar totalmente pronto."""
+    global ELECTRON_PROCESS
+
+    def _launch():
+        global ELECTRON_PROCESS
         time.sleep(delay)
+        step("Iniciando interface nativa via Electron...")
+
+        # Injeta o caminho da pasta local 'node' se ela existir na raiz do projeto
+        env = os.environ.copy()
+        local_node = ROOT / "node"
+        if local_node.exists():
+            env["PATH"] = str(local_node) + os.pathsep + env.get("PATH", "")
+
+        # Tenta executar o electron via npm local ou comando direto
+        cmd = None
+        if (ROOT / "node" / "npm.cmd").exists():
+            cmd = [str(ROOT / "node" / "npm.cmd"), "start"]
+        elif shutil.which("npm"):
+            cmd = ["npm", "start"]
+        elif shutil.which("npx"):
+            cmd = ["npx", "electron", "."]
+
+        if not cmd:
+            fail("Não foi possível localizar 'npm' ou 'electron' para abrir o app.")
+            info("Certifique-se de instalar as dependências com: npm install")
+            return
+
         try:
-            webbrowser.open(url)
-        except Exception:
-            pass
-    threading.Thread(target=_open, daemon=True).start()
+            ELECTRON_PROCESS = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
+            ok("Janela do Electron iniciada")
+        except Exception as e:
+            fail(f"Erro ao disparar o Electron: {e}")
+
+    threading.Thread(target=_launch, daemon=True).start()
 
 
 def start_server():
-    """Sobe o server.py e bloqueia (é o processo principal)."""
+    """Sobe o server.py e bloqueia até o encerramento do sistema."""
     url = f"http://127.0.0.1:{PORT}"
-    step(f"Iniciando servidor em {bold(url)}...")
+    step(f"Iniciando servidor backend em {bold(url)}...")
     print()
     print(cyan("══════════════════════════════════════════════"))
-    print(green(f"  SIGNALIS-OS disponível em: {bold(url)}"))
+    print(green(f"  SIGNALIS-OS (ELECTRON) ativado: {bold(url)}"))
     print(cyan("══════════════════════════════════════════════"))
-    print(dim("  Ctrl+C para encerrar"))
+    print(dim("  Pressione Ctrl+C no terminal para desligar"))
     print()
 
-    open_browser_delayed(url)
+    # Dispara a abertura do Electron
+    start_electron_delayed()
 
     env = os.environ.copy()
     env["PORT"]         = str(PORT)
@@ -385,7 +388,6 @@ def start_server():
     env["OLLAMA_HOST"]  = OLLAMA_HOST
     env["OLLAMA_PORT"]  = str(OLLAMA_PORT)
 
-    # Se o modelo customizado foi criado, usa ele
     models = list_local_models()
     if any(m.startswith(CUSTOM_MODEL_NAME) for m in models):
         env["OLLAMA_MODEL"] = CUSTOM_MODEL_NAME
@@ -400,7 +402,10 @@ def start_server():
         subprocess.run([sys.executable, str(ROOT / "server.py")], env=env)
     except KeyboardInterrupt:
         print()
-        print(cyan("\n  SIGNALIS-OS encerrado. Até logo, operador."))
+        print(cyan("\n  SIGNALIS-OS encerrado. Fechando processos..."))
+    finally:
+        if ELECTRON_PROCESS and ELECTRON_PROCESS.poll() is None:
+            ELECTRON_PROCESS.kill()
 
 
 # ── CLI ───────────────────────────────────────────────────────
@@ -419,10 +424,7 @@ def parse_args():
     p.add_argument(
         "--model", "-m",
         default=OLLAMA_MODEL,
-        help=f"Modelo a usar (padrão: {OLLAMA_MODEL})\n"
-             "Ollama:      gemma4:e4b, qwen2.5:3b, llama3.1\n"
-             "OpenRouter:  google/gemma-4-26b-a4b-it:free\n"
-             "Groq:        llama-3.1-8b-instant, gemma2-9b-it",
+        help=f"Modelo a usar (padrão: {OLLAMA_MODEL})",
     )
     p.add_argument(
         "--port",
@@ -440,9 +442,9 @@ def parse_args():
         help=f"Tamanho do contexto para Ollama (padrão: {NUM_CTX})",
     )
     p.add_argument(
-        "--no-browser",
+        "--no-electron",
         action="store_true",
-        help="Não abre o navegador automaticamente",
+        help="Inicia apenas o servidor sem abrir a janela do Electron",
     )
     p.add_argument(
         "--skip-pull",
@@ -471,7 +473,6 @@ def main():
 
     banner()
 
-    # Verificações básicas
     check_python()
     ensure_python_deps(auto_install=not args.no_install)
     check_server_py()
@@ -479,7 +480,6 @@ def main():
     check_api_key()
     print()
 
-    # Fluxo Ollama local
     if LLM_PROVIDER == "ollama":
         ollama_ok = check_ollama_installed()
         if ollama_ok:
@@ -494,10 +494,9 @@ def main():
 
     print()
 
-    # Sobe o servidor (bloqueia aqui)
-    if args.no_browser:
-        global open_browser_delayed
-        open_browser_delayed = lambda *a, **kw: None
+    if args.no_electron:
+        global start_electron_delayed
+        start_electron_delayed = lambda *a, **kw: None
 
     start_server()
 

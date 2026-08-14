@@ -32,9 +32,33 @@
   user-select: none;         /* sem seleção acidental de texto */
 }
 
+/* Torna o fundo do documento totalmente transparente */
+html, body {
+  background: transparent !important;
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Evita scrolls indesejados no fundo */
+}
+
+/* Exemplo de Titlebar semi-transparente estilo Cyberpunk/Dark */
+#titlebar {
+  background: rgba(13, 17, 23, 0.85); /* 85% de opacidade */
+  backdrop-filter: blur(10px);         /* Efeito de vidro fosco (Windows/macOS) */
+  border-bottom: 1px solid rgba(0, 255, 204, 0.2);
+  -webkit-app-region: drag;
+}
+
+/* O container principal da aplicação também pode ter um fundo translúcido */
+#app-container {
+  background: rgba(18, 18, 24, 0.75); /* Fundo escuro translúcido */
+  backdrop-filter: blur(12px);         /* Efeito blur no que está atrás */
+  border: 1px solid rgba(0, 255, 204, 0.15);
+  border-radius: 8px;
+  height: calc(100vh - 32px);
+}
+
 body {
   font-family: var(--font-mono);
-  background: var(--bg-deep);
   color: var(--blue-main);
   width: 100vw;
   height: 100vh;
@@ -138,6 +162,40 @@ body::before {
   display: flex;
   gap: 4px;
   -webkit-app-region: no-drag;
+}
+
+/* Garante que os botões dentro da titlebar sejam clicáveis */
+.titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  -webkit-app-region: no-drag; /* Importante: permite clicar no botão */
+}
+
+/* Botão do Ngrok integrado à barra */
+.ngrok-btn {
+  background: rgba(0, 255, 204, 0.05);
+  border: 1px solid rgba(0, 255, 204, 0.3);
+  color: #00ffcc;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.ngrok-btn:hover {
+  background: rgba(0, 255, 204, 0.2);
+  border-color: #00ffcc;
+  box-shadow: 0 0 8px rgba(0, 255, 204, 0.4);
+}
+
+.ngrok-btn:active {
+  transform: scale(0.95);
 }
 
 /* ── BOTÕES GLOBAIS ───────────────────────────────────────── */
