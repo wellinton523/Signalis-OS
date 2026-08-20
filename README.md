@@ -1,308 +1,77 @@
-```python
-full_readme = """# ─── SIGNALIS OS ───
-### *[ SYSTEM DIAGNOSTIC & INTERFACE TERMINAL ]*
+# ✨ Signalis-OS ✨
 
+<p align="center">
+  <img src="https://img.shields.io/badge/HTML5-E34F26?style=for-the-badge&logo=html5&logoColor=white">
+  <img src="https://img.shields.io/badge/CSS3-1572B6?style=for-the-badge&logo=css3&logoColor=white">
+  <img src="https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black">
+</p>
 
-```
-
-██████╗ ██╗██████╗ ███╗   ██╗ █████╗ ██╗     ██╗███████╗    ██████╗ ███████╗
-██╔════╝ ██║██╔════╝ ████╗  ██║██╔══██╗██║     ██║██╔════╝   ██╔═══██╗██╔════╝
-██║  ███╗██║██║  ███╗██╔██╗ ██║███████║██║     ██║███████╗   ██║   ██║███████╗
-██║   ██║██║██║   ██║██║╚██╗██║██╔══██║██║     ██║╚════██║   ██║   ██║╚════██║
-╚██████╔╝██║╚██████╔╝██║ ╚████║██║  ██║███████╗██║███████╗   ╚██████╔╝███████║
-╚═════╝ ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝╚═╝╚══════╝    ╚═════╝ ╚══════╝
-[ E U S A N  N A T I O N A L  O S ]
-
-```
+<p align="center">
+  <strong>📺 Sistema Operacional e Terminal Retrotech inspirado em SIGNALIS</strong><br>
+  <strong>Desenvolvido por wellinton523</strong>
+</p>
 
 ---
 
-## ─── OVERVIEW ───
+## 📋 Sobre o Projeto
 
-**SIGNALIS OS** é uma interface web retro-futurista e terminal interativo inspirado na estética visual e atmosfera de **SIGNALIS** (*rose-engine*).
+**SIGNALIS OS** é um terminal interativo e interface web com visual retrotech/industrial, projetado com base no universo e na estética do jogo de horror psicológico **SIGNALIS** (*rose-engine*).
 
-O projeto recria a interface retrô-tecnológica das instalações da **Nação de Eusan**, combinando elementos de UI analógica, efeitos de monitor CRT, tipografia industrial e paleta de cores monocromática marcante (vermelho, preto e cinza).
+O sistema recria os terminais das instalações militares da **Nação de Eusan**, trazendo:
 
----
-
-## ─── RECURSOS & CARACTERÍSTICAS ───
-
-- **Estética CRT Autêntica:**
-  - Scanlines, aberração cromática, flickering suave e curvatura de monitor clássico via CSS.
-- **Interface Terminal Interativa:**
-  - Prompt de comando para navegação, leitura de arquivos e execução de diretivas do sistema Eusan.
-- **Visual Retrotech / Industrial:**
-  - Design baseado nos menus, logs de dados e exibições do sistema *S-23 Sierpinski*.
-- **Design Responsivo:**
-  - Otimizado para desktop e telas menores mantendo a imersão de um terminal de bordo.
-- **Arquitetura Leve:**
-  - Desenvolvido em HTML/CSS/JS vanila para inicialização instantânea e alta performance.
+| Característica | Descrição |
+|----------------|-----------|
+| 📺 **Fidelidade Estética** | Monitor CRT com scanlines, aberração cromática e flickering |
+| 🖥️ **Terminal Interativo** | Interpretador de comandos com respostas temáticas |
+| 🎨 **Paleta Industrial** | Visual brutalista monocromático (vermelho, preto, cinza e branco) |
+| 🔊 **Audio Feedbacks** | Efeitos sonoros imersivos ao digitar e navegar (SFX) |
+| ⚡ **Performance Leve** | HTML5, CSS3 e JS Vanilla sem dependências pesadas |
+| 📱 **Layout Responsivo** | Otimizado para telas desktop e dispositivos móveis |
 
 ---
 
-## ─── DEMONSTRAÇÃO ───
+## 🚀 Status do Projeto
 
+### ✅ Funcionalidades Concluídas
 
-```
+- [x] Motor de renderização de efeitos CRT via CSS puro
+- [x] Terminal de comandos interativo (`help`, `status`, `logs`, `clear`)
+- [x] Efeitos de digitação gradual (*typewriter effect*) nas saídas de texto
+- [x] Interface com avisos de segurança no padrão Protektor
+- [x] Suporte a comandos de verificação de sistema e relatórios de setor
+- [x] Design responsivo com moldura analógica de monitor industrial
 
-+-----------------------------------------------------------------------+
-|  [WARNING: UNAUTHORIZED ACCESS WILL BE REPORTED TO PROTEKTOR UNITS]   |
-|                                                                       |
-|  STATUS: ONLINE                                                       |
-|  LOCATION: S-23 SIERPINSKI                                            |
-|  OPERATOR: REPLIKA LST-S2301                                          |
-+-----------------------------------------------------------------------+
+### 🚧 Em Andamento
 
-```
-
----
-
-## ─── TECNOLOGIAS UTILIZADAS ───
-
-- **HTML5:** Estruturação semântica do terminal e dos blocos de dados.
-- **CSS3:** Efeitos visuais de monitor CRT, scanlines, animações e tipografia retro.
-- **JavaScript (ES6+):** Processamento de comandos, manipulação de texto e efeitos de interface.
+- [ ] **Módulo de Áudio Avançado** - Síntese de fala estilo rádio numérico (Numbers Station)
+- [ ] **Navegador de Logs** - Leitura de arquivos secretos da instalação S-23 Sierpinski
 
 ---
 
-## ─── INSTALAÇÃO & EXECUÇÃO ───
+## 🎮 Comandos do Terminal
 
-### Pré-requisitos
-Apenas um navegador web moderno (Chrome, Firefox, Edge ou Safari).
-
-### Passo a Passo
-
-1. **Clone o repositório:**
-   ```bash
-   git clone [https://github.com/wellinton523/Signalis-OS.git](https://github.com/wellinton523/Signalis-OS.git)
-
-```
-
-2. **Acesse o diretório:**
-```bash
-cd Signalis-OS
-
-```
-
-
-3. **Execute o projeto:**
-* Abra o arquivo `index.html` diretamente no seu navegador, ou suba um servidor local simples:
-
-
-```bash
-npx serve .
-
-```
-
-
-
----
-
-## ─── ESTRUTURA DO REPOSITÓRIO ───
-
-```
-Signalis-OS/
-├── assets/
-│   ├── css/          # Estilos do terminal, scanlines e temas
-│   ├── js/           # Lógica dos comandos e navegação do OS
-│   ├── audio/        # Efeitos sonoros (SFX)
-│   └── img/          # Logos e texturas industriais
-├── index.html        # Interface principal
-└── README.md         # Documentação
-
-```
-
----
-
-## ─── COMANDOS DISPONÍVEIS ───
+### 🖥️ Comandos Básicos
 
 | Comando | Descrição |
-| --- | --- |
-| `help` | Exibe a lista de comandos do terminal. |
-| `status` | Diagnóstico de integridade do sistema e do operador. |
-| `logs` | Acessa arquivos de registros da instalação. |
-| `clear` | Limpa as linhas do terminal. |
-| `about` | Informações sobre a Nação de Eusan e o projeto. |
+|---------|-----------|
+| `help` | Lista todos os comandos disponíveis no sistema |
+| `status` | Exibe o diagnóstico de integridade do terminal e do operador |
+| `clear` | Limpa a tela do terminal |
 
----
-
-## ─── CONTRIBUIÇÃO ───
-
-Para contribuir com novas melhorias ou comandos:
-
-1. Faça um **Fork** do repositório
-2. Crie uma branch para sua modificação (`git checkout -b feature/NovaFuncionalidade`)
-3. Confirme suas alterações (`git commit -m 'feat: Adiciona novo comando no terminal'`)
-4. Envie a branch (`git push origin feature/NovaFuncionalidade`)
-5. Abra um **Pull Request**
-
----
-
-## ─── LICENÇA & CRÉDITOS ───
-
-* **Inspiração:** [SIGNALIS](https://rose-engine.org/signalis/) por **rose-engine** / **Humble Games**.
-* **Autor:** [wellinton523](https://www.google.com/search?q=https://github.com/wellinton523).
-
----
-
-with open("README.md", "w", encoding="utf-8") as f:
-f.write(full_readme)
-
-print("Script completo gerado!")
-
-```
-
-```text?code_stdout&code_event_index=1
-Script completo gerado!
-
-
-```
-
-Aqui está o conteúdo completo para o arquivo `README.md`:
-
-```markdown
-# ─── SIGNALIS OS ───
-### *[ SYSTEM DIAGNOSTIC & INTERFACE TERMINAL ]*
-
-
-```
-
-██████╗ ██╗██████╗ ███╗   ██╗ █████╗ ██╗     ██╗███████╗    ██████╗ ███████╗
-██╔════╝ ██║██╔════╝ ████╗  ██║██╔══██╗██║     ██║██╔════╝   ██╔═══██╗██╔════╝
-██║  ███╗██║██║  ███╗██╔██╗ ██║███████║██║     ██║███████╗   ██║   ██║███████╗
-██║   ██║██║██║   ██║██║╚██╗██║██╔══██║██║     ██║╚════██║   ██║   ██║╚════██║
-╚██████╔╝██║╚██████╔╝██║ ╚████║██║  ██║███████╗██║███████╗   ╚██████╔╝███████║
-╚═════╝ ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝╚═╝╚══════╝    ╚═════╝ ╚══════╝
-[ E U S A N  N A T I O N A L  O S ]
-
-```
-
----
-
-## ─── OVERVIEW ───
-
-**SIGNALIS OS** é uma interface web retro-futurista e terminal interativo inspirado na estética visual e atmosfera de **SIGNALIS** (*rose-engine*).
-
-O projeto recria a interface retrô-tecnológica das instalações da **Nação de Eusan**, combinando elementos de UI analógica, efeitos de monitor CRT, tipografia industrial e paleta de cores monocromática marcante (vermelho, preto e cinza).
-
----
-
-## ─── RECURSOS & CARACTERÍSTICAS ───
-
-- **Estética CRT Autêntica:**
-  - Scanlines, aberração cromática, flickering suave e curvatura de monitor clássico via CSS.
-- **Interface Terminal Interativa:**
-  - Prompt de comando para navegação, leitura de arquivos e execução de diretivas do sistema Eusan.
-- **Visual Retrotech / Industrial:**
-  - Design baseado nos menus, logs de dados e exibições do sistema *S-23 Sierpinski*.
-- **Design Responsivo:**
-  - Otimizado para desktop e telas menores mantendo a imersão de um terminal de bordo.
-- **Arquitetura Leve:**
-  - Desenvolvido em HTML/CSS/JS vanila para inicialização instantânea e alta performance.
-
----
-
-## ─── DEMONSTRAÇÃO ───
-
-
-```
-
-+-----------------------------------------------------------------------+
-|  [WARNING: UNAUTHORIZED ACCESS WILL BE REPORTED TO PROTEKTOR UNITS]   |
-|                                                                       |
-|  STATUS: ONLINE                                                       |
-|  LOCATION: S-23 SIERPINSKI                                            |
-|  OPERATOR: REPLIKA LST-S2301                                          |
-+-----------------------------------------------------------------------+
-
-```
-
----
-
-## ─── TECNOLOGIAS UTILIZADAS ───
-
-- **HTML5:** Estruturação semântica do terminal e dos blocos de dados.
-- **CSS3:** Efeitos visuais de monitor CRT, scanlines, animações e tipografia retro.
-- **JavaScript (ES6+):** Processamento de comandos, manipulação de texto e efeitos de interface.
-
----
-
-## ─── INSTALAÇÃO & EXECUÇÃO ───
-
-### Pré-requisitos
-Apenas um navegador web moderno (Chrome, Firefox, Edge ou Safari).
-
-### Passo a Passo
-
-1. **Clone o repositório:**
-   ```bash
-   git clone [https://github.com/wellinton523/Signalis-OS.git](https://github.com/wellinton523/Signalis-OS.git)
-
-```
-
-2. **Acesse o diretório:**
-```bash
-cd Signalis-OS
-
-```
-
-
-3. **Execute o projeto:**
-* Abra o arquivo `index.html` diretamente no seu navegador, ou suba um servidor local simples:
-
-
-```bash
-npx serve .
-
-```
-
-
-
----
-
-## ─── ESTRUTURA DO REPOSITÓRIO ───
-
-```
-Signalis-OS/
-├── assets/
-│   ├── css/          # Estilos do terminal, scanlines e temas
-│   ├── js/           # Lógica dos comandos e navegação do OS
-│   ├── audio/        # Efeitos sonoros (SFX)
-│   └── img/          # Logos e texturas industriais
-├── index.html        # Interface principal
-└── README.md         # Documentação
-
-```
-
----
-
-## ─── COMANDOS DISPONÍVEIS ───
+### 🗄️ Registros e Diagnóstico
 
 | Comando | Descrição |
-| --- | --- |
-| `help` | Exibe a lista de comandos do terminal. |
-| `status` | Diagnóstico de integridade do sistema e do operador. |
-| `logs` | Acessa arquivos de registros da instalação. |
-| `clear` | Limpa as linhas do terminal. |
-| `about` | Informações sobre a Nação de Eusan e o projeto. |
+|---------|-----------|
+| `logs` | Lista os registros de auditoria e relatórios de setor |
+| `read <arquivo>` | Lê um arquivo de log específico da instalação |
 
----
 
-## ─── CONTRIBUIÇÃO ───
+## 🤖 Níveis de Autorização de Sistema
 
-Para contribuir com novas melhorias ou comandos:
+| Nível | Identificação | Permissões |
+|-------|---------------|------------|
+| 1 | Gestalt Worker | Leitura básica e acesso a manuais de operação |
+| 2 | Protektor Unit | Acesso a logs de patrulha e diagnósticos de setor |
+| 3 | Command Replika | Alteração de parâmetros de sistema e emissão de alertas |
+| 4 | National Council | Acesso total irrestrito (RESTRITO) |
 
-1. Faça um **Fork** do repositório
-2. Crie uma branch para sua modificação (`git checkout -b feature/NovaFuncionalidade`)
-3. Confirme suas alterações (`git commit -m 'feat: Adiciona novo comando no terminal'`)
-4. Envie a branch (`git push origin feature/NovaFeature`)
-5. Abra um **Pull Request**
-
----
-
-## ─── LICENÇA & CRÉDITOS ───
-
-* **Inspiração:** [SIGNALIS](https://rose-engine.org/signalis/) por **rose-engine** / **Humble Games**.
-* **Autor:** [wellinton523](https://www.google.com/search?q=https://github.com/wellinton523).
-
----
